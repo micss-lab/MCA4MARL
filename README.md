@@ -3,7 +3,7 @@
 1) Download the DevC++ 5.11 or higher.
 2) Install it.
 3) The needed libraries are only internal libraries as follow:
-
+   
 =================================================
 ```
 #include <iostream>
@@ -16,7 +16,7 @@
 #include <iomanip> 
 ```
 ================================================= 
-4) To compile the source code (RevAP-V1.cpp) press F9 or in menu bar select Execute---> Compile.
-5) To run the source code (RevAP-V1.cpp) press F10 or in menu bar select Execute---> run.
-6) You can directly run the RevAP-V1.exe to see the results.
-7) 
+# Compilation and Running the Source Code
+1) To compile the source code (RevAP-V1.cpp) press F9 or in menu bar select Execute---> Compile.
+2) To run the source code (RevAP-V1.cpp) press F10 or in menu bar select Execute---> run.
+3) You can directly run the RevAP-V1.exe to see the results.
