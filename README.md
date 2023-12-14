@@ -1,5 +1,13 @@
 # MCA4MARL
+
 # RevAP: A Bankruptcy-based Algorithm to Solve the Multi-agent Credit Assignment Problem in Task Start Threshold-based Multi-agent Systems
+=================================================
+
+This is the repo to provide supplementary material for the reproducibility of the RevAP approach.
+
+=================================================
+# Deployment Steps
+
 1) Download the DevC++ 5.11 or higher.
 2) Install it.
 3) The needed libraries are only internal libraries as follow:
