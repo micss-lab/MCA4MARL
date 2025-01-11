@@ -11,3 +11,6 @@ The needed libraries are only internal libraries as follows:
 #include <time.h>
 #include <iomanip> 
 =================================================
+Compilation and Running the Source Code
+To compile the source code (Maze-V6.cpp) press F9 or in the menu bar select Execute---> Compile.
+To run the source code (Maze-V6.cpp) press F10 or in the menu bar select Execute---> run.
