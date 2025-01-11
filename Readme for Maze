@@ -1,3 +1,13 @@
 Download the DevC++ 5.11 or higher.
 Install it.
 The needed libraries are only internal libraries as follows:
+=================================================
+#include <iostream>
+#include <stdio.h>
+#include <conio.h>
+#include <stdlib.h>
+#include <math.h>
+#include <windows.h>
+#include <time.h>
+#include <iomanip> 
+=================================================
