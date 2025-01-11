@@ -1,4 +1,5 @@
-Maze (Path-Planning)
+Maze (Path-Planning):
+================================================
 Download the DevC++ 5.11 or higher.
 Install it.
 The needed libraries are only internal libraries as follows:
