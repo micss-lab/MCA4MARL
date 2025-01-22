@@ -4,10 +4,10 @@
 /*          0: means the obstacle  1:means the feasible moving  2:means the charge station          */
 /****************************************************************************************************/
 
-#include <iostream>
-#include <iomanip>
 #include <cmath>
-#include <ctime>
+#include <iomanip>
+#include <iostream>
+#include <vector>
 
 #define ROW_COUNT 50 // The number of rows in the maze
 #define COL_COUNT 50 // The number of columns in the maze
@@ -33,7 +33,7 @@
 /*                     */
 /***********************/
 
-#define EPISODE_COUNT 1000000
+#define EPISODE_COUNT 1'000'000
 #define LEARNING_RATE 0.2
 #define DISCOUNT_FACTOR 0.9
 
@@ -141,7 +141,8 @@ tuple<int, int> selectFirstPlace(const int maze[ROW_COUNT][COL_COUNT]) {
 }
 
 /**************************************************************************/
-int selectAction(const double qTable[ROW_COUNT][COL_COUNT][ACTION_COUNT], const int x, const int y, const double epsilon) {
+int selectAction(const double qTable[ROW_COUNT][COL_COUNT][ACTION_COUNT], const int x, const int y,
+                 const double epsilon) {
     int action;
     double randomValue = static_cast<double>(rand()) / RAND_MAX;
 
@@ -163,7 +164,8 @@ int selectAction(const double qTable[ROW_COUNT][COL_COUNT][ACTION_COUNT], const 
 }
 
 // Function to perform the action and compute the reward
-tuple<int, int, int, double> performAction(const int maze[ROW_COUNT][COL_COUNT], const int x1, const int y1, const int action) {
+tuple<int, int, int, double> performAction(const int maze[ROW_COUNT][COL_COUNT], const int x1, const int y1,
+                                           const int action) {
     double reward = 0.0;
     int changePos = 0;
     int x2 = x1, y2 = y1;
@@ -257,11 +259,13 @@ void updateQTable(double qTable[ROW_COUNT][COL_COUNT][ACTION_COUNT], const int x
     }
 
     // Update the Q-value for the current state and action
-    qTable[x1][y1][action] = qTable[x1][y1][action] + LEARNING_RATE * (reward + DISCOUNT_FACTOR * maxQNext - qTable[x1][y1][action]);
+    qTable[x1][y1][action] = qTable[x1][y1][action] + LEARNING_RATE * (
+                                 reward + DISCOUNT_FACTOR * maxQNext - qTable[x1][y1][action]);
 }
 
 //*************************************************************************/
-int selectMaxQ(const double qTable[ROW_COUNT][COL_COUNT][ACTION_COUNT], const int x, const int y, int checkMatrix[ROW_COUNT][COL_COUNT]) {
+int selectMaxQ(const double qTable[ROW_COUNT][COL_COUNT][ACTION_COUNT], const int x, const int y,
+               int checkMatrix[ROW_COUNT][COL_COUNT]) {
     double maxItem = numeric_limits<double>::lowest(); // Initialize to the lowest possible value
     int selectedAction = -1;
 
@@ -325,7 +329,8 @@ int selectMaxQ(const double qTable[ROW_COUNT][COL_COUNT][ACTION_COUNT], const in
 }
 
 //*************************************************************************/
-void selectPath(const double qTable[ROW_COUNT][COL_COUNT][ACTION_COUNT], const int xStart, const int yStart, const int maze[ROW_COUNT][COL_COUNT]) {
+void selectPath(const double qTable[ROW_COUNT][COL_COUNT][ACTION_COUNT], const int xStart, const int yStart,
+                const int maze[ROW_COUNT][COL_COUNT]) {
     int step = 1;
     int checkMatrix[ROW_COUNT][COL_COUNT] = {0}; // Keeps track of visited positions
     int x = xStart, y = yStart; // Current position
@@ -391,7 +396,8 @@ void selectPath(const double qTable[ROW_COUNT][COL_COUNT][ACTION_COUNT], const i
 }
 
 //*************************************************************************/
-void trainAgent(const int maze[ROW_COUNT][COL_COUNT], double qTable[ROW_COUNT][COL_COUNT][ACTION_COUNT], double& epsilon) {
+void trainAgent(const int maze[ROW_COUNT][COL_COUNT], double qTable[ROW_COUNT][COL_COUNT][ACTION_COUNT],
+                double &epsilon) {
     int path[ROW_COUNT][COL_COUNT] = {0};
     int arrival = 0;
     int x1, y1, x2, y2;
@@ -406,7 +412,6 @@ void trainAgent(const int maze[ROW_COUNT][COL_COUNT], double qTable[ROW_COUNT][C
 
         // Start generating one episode
         while ((arrival == 0) && (iteration < 5000)) {
-
             // Select an action using an epsilon-greedy policy
             int act = selectAction(qTable, x1, y1, epsilon);
 
@@ -432,7 +437,8 @@ void trainAgent(const int maze[ROW_COUNT][COL_COUNT], double qTable[ROW_COUNT][C
 }
 
 //*************************************************************************/
-void testAgent(const int maze[ROW_COUNT][COL_COUNT], const double qTable[ROW_COUNT][COL_COUNT][ACTION_COUNT], const int nrTestEpisodes) {
+void testAgent(const int maze[ROW_COUNT][COL_COUNT], const double qTable[ROW_COUNT][COL_COUNT][ACTION_COUNT],
+               const int nrTestEpisodes) {
     // Test the agent by selecting a random starting position and finding the path to the charging station
     for (int test = 0; test < nrTestEpisodes; test++) {
         int x1, y1;
@@ -442,22 +448,224 @@ void testAgent(const int maze[ROW_COUNT][COL_COUNT], const double qTable[ROW_COU
 }
 
 //*************************************************************************/
-int main() {
-    srand(time(NULL));
+int countChargingStations(const int maze[ROW_COUNT][COL_COUNT], const int startRow, const int startCol,
+                          const int endRow, const int endCol) {
+    int count = 0;
+    for (int i = startRow; i < endRow; ++i) {
+        for (int j = startCol; j < endCol; ++j) {
+            if (maze[i][j] == 2) {
+                ++count;
+            }
+        }
+    }
+    return count;
+}
+
+//*************************************************************************/
+class MazeNode {
+public:
+    int maze[ROW_COUNT][COL_COUNT]{}; // Subenvironment's maze
+    double qTable[ROW_COUNT][COL_COUNT][ACTION_COUNT] = {0}; // Q-table for the subenvironment
+    MazeNode *parent; // Pointer to the parent node
+    vector<MazeNode *> children; // List of child subenvironments
+    int startRow, startCol, endRow, endCol; // Bounds of the subenvironment
+    int chargingStationCount; // Number of charging stations in this subenvironment
+
+    // Constructor
+    MazeNode(const int maze[ROW_COUNT][COL_COUNT], const int startRow, const int startCol, const int endRow,
+             const int endCol, MazeNode *parent = nullptr): parent(parent), startRow(startRow), startCol(startCol),
+                                                            endRow(endRow), endCol(endCol) {
+        // Copy the maze
+        for (int i = 0; i < ROW_COUNT; i++) {
+            for (int j = 0; j < COL_COUNT; j++) {
+                this->maze[i][j] = maze[i][j];
+            }
+        }
+
+        // Count the number of charging stations in this subenvironment
+        chargingStationCount = countChargingStations(maze, startRow, startCol, endRow, endCol);
+    }
+
+    // Destructor
+    ~MazeNode() {
+        // Delete all child nodes
+        for (const MazeNode *child: children) {
+            delete child;
+        }
+        children.clear(); // Clear the vector for safety
+    }
+
+    // Add a child node
+    void addChild(MazeNode *child) {
+        children.push_back(child);
+    }
+};
+
+//*************************************************************************/
+void splitMaze(MazeNode *node, const int maze[ROW_COUNT][COL_COUNT], const int startRow, const int startCol,
+               const int endRow, const int endCol) {
+    if ((endRow - startRow) <= 3 && (endCol - startCol) <= 3) {
+        return; // Stop splitting if subenvironment is smaller than 3x3
+    }
+
+    const int midRow = (startRow + endRow) / 2;
+    const int midCol = (startCol + endCol) / 2;
+
+    // Create potential child nodes
+    MazeNode *child1 = new MazeNode(maze, startRow, startCol, midRow, midCol, node); // Top-left
+    MazeNode *child2 = new MazeNode(maze, startRow, midCol, midRow, endCol, node); // Top-right
+    MazeNode *child3 = new MazeNode(maze, midRow, startCol, endRow, midCol, node); // Bottom-left
+    MazeNode *child4 = new MazeNode(maze, midRow, midCol, endRow, endCol, node); // Bottom-right
+
+    // Check if all four children have at least one charging station
+    const bool allHaveChargingStations = (child1->chargingStationCount > 0) &&
+                                         (child2->chargingStationCount > 0) &&
+                                         (child3->chargingStationCount > 0) &&
+                                         (child4->chargingStationCount > 0);
+
+    // If all pieces have charging stations, proceed with the split
+    if (allHaveChargingStations) {
+        // Add children to the current node
+        node->addChild(child1);
+        node->addChild(child2);
+        node->addChild(child3);
+        node->addChild(child4);
+
+        // Recursively split the children
+        splitMaze(child1, maze, startRow, startCol, midRow, midCol);
+        splitMaze(child2, maze, startRow, midCol, midRow, endCol);
+        splitMaze(child3, maze, midRow, startCol, endRow, midCol);
+        splitMaze(child4, maze, midRow, midCol, endRow, endCol);
+    } else {
+        // If any child does not have a charging station, do not split
+        // Deallocate memory for the unused children
+        delete child1;
+        delete child2;
+        delete child3;
+        delete child4;
+    }
+}
+
+//*************************************************************************/
+void printTree(const MazeNode *node, const string &prefix = "", const bool isLast = true, const bool isRoot = true) {
+    if (!node) return;
+
+    // For the root node, don't add any symbols
+    if (isRoot) {
+        cout << "Node: Start(" << node->startRow << ", " << node->startCol << "), "
+                << "End(" << node->endRow << ", " << node->endCol << "), "
+                << "Size(" << (node->endRow - node->startRow) << "x" << (node->endCol - node->startCol) << "), "
+                << "Charging Stations: " << node->chargingStationCount << "\n";
+    } else {
+        // For all other nodes, add the appropriate symbols
+        const string currentPrefix = prefix + (isLast ? "└─ " : "├─ ");
+        cout << currentPrefix
+                << "Node: Start(" << node->startRow << ", " << node->startCol << "), "
+                << "End(" << node->endRow << ", " << node->endCol << "), "
+                << "Size(" << (node->endRow - node->startRow) << "x" << (node->endCol - node->startCol) << "), "
+                << "Charging Stations: " << node->chargingStationCount << "\n";
+    }
+
+    // Adjust prefix for children
+    string childPrefix;
+    if (isRoot) {
+        childPrefix = " ";
+    } else {
+        childPrefix = prefix + (isLast ? "    " : "│   ");
+    }
+
+    // Traverse children
+    for (size_t i = 0; i < node->children.size(); ++i) {
+        printTree(node->children[i], childPrefix, i == node->children.size() - 1, false);
+    }
+}
+
+//*************************************************************************/
+MazeNode *createSubEnvironments(const int maze[ROW_COUNT][COL_COUNT]) {
+    // Create the root node for the entire maze
+    MazeNode *root = new MazeNode(maze, 0, 0, ROW_COUNT, COL_COUNT);
+
+    // Split the maze into sub-environments
+    splitMaze(root, maze, 0, 0, ROW_COUNT, COL_COUNT);
+
+    // Print the tree structure
+    cout << "\n\nMaze Sub-environment Tree:\n\n";
+    printTree(root);
+
+    // Return the root node to the caller
+    return root;
+}
+
+//*************************************************************************/
+void propagateQTable(MazeNode *node, const double rootQTable[ROW_COUNT][COL_COUNT][ACTION_COUNT]) {
+    if (!node) return;
+
+    // Propagate the Q-table from the root to the current node
+    for (int i = node->startRow; i < node->endRow; ++i) {
+        for (int j = node->startCol; j < node->endCol; ++j) {
+            for (int action = 0; action < ACTION_COUNT; ++action) {
+                node->qTable[i][j][action] = rootQTable[i][j][action];
+            }
+        }
+    }
+
+    // Recursively propagate to all children
+    for (MazeNode *child: node->children) {
+        propagateQTable(child, rootQTable);
+    }
+}
+
+//*************************************************************************/
+void performPathPlanningAndPropagate(MazeNode *root) {
+    if (!root) {
+        cerr << "Error: Root node is null.\n";
+        return;
+    }
+
+    // Perform Q-learning on the entire environment (root node)
+    double rootQTable[ROW_COUNT][COL_COUNT][ACTION_COUNT] = {0};
     double epsilon = 1.0;
+    trainAgent(root->maze, rootQTable, epsilon); // Use your existing Q-learning function
 
-    int maze[ROW_COUNT][COL_COUNT] = {0};
-    double qTable[ROW_COUNT][COL_COUNT][ACTION_COUNT] = {0};
+    // Propagate the Q-table results from the root to all sub-environments
+    propagateQTable(root, rootQTable);
 
-    constexpr double freeSpaceProb = 0.7;
-    constexpr double obstacleProb = 0.28;
-    constexpr double chargingStationProb = 0.02;
+    cout << "\nPath planning performed on the root environment and propagated to all sub-environments.\n";
+}
 
-    createMaze(maze, freeSpaceProb, obstacleProb, chargingStationProb);
+//*************************************************************************/
+int main() {
+    // Test Q-learning on a maze environment
+    // srand(time(NULL));
+    // double epsilon = 1.0;
+    //
+    // int maze[ROW_COUNT][COL_COUNT] = {0};
+    // double qTable[ROW_COUNT][COL_COUNT][ACTION_COUNT] = {0};
+    //
+    // constexpr double freeSpaceProb = 0.7;
+    // constexpr double obstacleProb = 0.28;
+    // constexpr double chargingStationProb = 0.02;
+    //
+    // createMaze(maze, freeSpaceProb, obstacleProb, chargingStationProb);
+    // printMatrixInt(maze, "Maze");
+    //
+    // trainAgent(maze, qTable, epsilon);
+    // testAgent(maze, qTable, 10);
+
+    int maze[ROW_COUNT][COL_COUNT];
+    createMaze(maze, 0.70, 0.25, 0.05);
+
+    // Print the maze (optional)
     printMatrixInt(maze, "Maze");
 
-    trainAgent(maze, qTable, epsilon);
-    testAgent(maze, qTable, 10);
+    // Create sub-environments based on the generated maze
+    MazeNode *root = createSubEnvironments(maze);
+
+    // Perform path planning and propagate the Q-table
+    performPathPlanningAndPropagate(root);
+
+    // Cleanup
+    delete root;
 
     return 0;
 }
