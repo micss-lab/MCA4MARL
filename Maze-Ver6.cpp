@@ -895,30 +895,6 @@ void propagateMazeDownwards(MazeNode *node) {
 }
 
 //*************************************************************************/
-void performPathPlanningAndPropagateDownwards(MazeNode *root) {
-    if (!root) {
-        cerr << "Error: Root node is null.\n";
-        return;
-    }
-
-    // Perform Q-learning on the entire environment (root node)
-    double rootQTable[ROW_COUNT][COL_COUNT][ACTION_COUNT] = {0};
-    double epsilon = 1.0;
-
-    // Train the agent on the root environment
-    trainAgentWithStoppingCriterion(root->maze, rootQTable, root->startRow, root->startCol, root->endRow, root->endCol,
-                                    epsilon);
-
-    // Copy the Q-table results to the leaf node
-    copyQTableToNode(root, rootQTable);
-
-    // Propagate the Q-table results from the root to all sub-environments
-    propagateQTableDownwards(root);
-
-    cout << "\nPath planning performed on the root environment and propagated to all sub-environments.\n";
-}
-
-//*************************************************************************/
 vector<pair<int, int> > getObstaclePositions(const int maze[ROW_COUNT][COL_COUNT]) {
     vector<pair<int, int> > obstaclePositions;
 
@@ -1048,8 +1024,9 @@ void simulateEnvironmentChanges(MazeNode *root, const int numSteps, vector<pair<
 
 //*************************************************************************/
 void testMasMat(MazeNode *root, const int numSteps, const int testEpisodes) {
-    // Perform path planning and propagate the results
-    performPathPlanningAndPropagateDownwards(root);
+    // Apply MasMat before any changes in the environment (initial training)
+    const double epsilon = 1.0; // Exploration parameter for Q-learning
+    masMat(root, {}, epsilon);
 
     // Simulate environment changes and test MasMat
     for (int step = 0; step < numSteps; ++step) {
@@ -1060,7 +1037,7 @@ void testMasMat(MazeNode *root, const int numSteps, const int testEpisodes) {
         simulateEnvironmentChanges(root, 1, changedPositions);
 
         // Apply the MasMat algorithm
-        masMat(root, changedPositions, 3);
+        masMat(root, changedPositions, epsilon);
 
         // Optionally print the updated maze for debugging
         printMatrixInt(root->maze, "Maze after step:");
@@ -1139,16 +1116,16 @@ void trainLeafNodesSequentially(const vector<MazeNode *> &leafNodes, double epsi
 
 //*************************************************************************/
 void applyLocalPathPlanning(MazeNode *root, const vector<pair<int, int> > &changedPositions, double epsilon) {
-    // Environment is static: train all leaf nodes in parallel
+    // Environment is static
     if (changedPositions.empty()) {
         vector<MazeNode *> leafNodes;
         collectLeafNodes(root, leafNodes);
         cout << "Environment is static. Performing global local path planning for all leaf nodes.\n";
-        trainLeafNodesInParallel(leafNodes, epsilon);
-        // trainLeafNodesSequentially(leafNodes, epsilon);
+        trainLeafNodesInParallel(leafNodes, epsilon); // Train all leaf nodes in parallel
 
-        // Environment changed: identify affected leaf nodes
+    // Environment changed
     } else {
+        // Collect all affected leaf nodes
         unordered_set<MazeNode *> uniqueAffectedNodes;
         for (const auto &pos: changedPositions) {
             MazeNode *affectedNode = root->findSubEnvironment(pos.first, pos.second);
@@ -1160,10 +1137,10 @@ void applyLocalPathPlanning(MazeNode *root, const vector<pair<int, int> > &chang
         // Convert the unordered_set to a vector
         vector<MazeNode *> affectedLeafNodes(uniqueAffectedNodes.begin(), uniqueAffectedNodes.end());
 
+        // Apply local path planning to affected leaf nodes
         if (!affectedLeafNodes.empty()) {
             cout << "Environment changed. Performing local path planning for affected leaf nodes.\n";
-            trainLeafNodesInParallel(affectedLeafNodes, epsilon);
-            // trainLeafNodesSequentially(affectedLeafNodes, epsilon);
+            trainLeafNodesInParallel(affectedLeafNodes, epsilon); // Train affected leaf nodes in parallel
         } else {
             cout << "No affected leaf nodes detected for local path planning.\n";
         }
@@ -1176,8 +1153,7 @@ void testLocalPathPlanning(MazeNode *root, const int numSteps, const int testEpi
 
     // Initial local path planning and propagation upwards
     const double epsilon = 1.0; // Exploration parameter for Q-learning
-    const vector<pair<int, int> > noChanges; // Empty vector to signify no changes initially
-    applyLocalPathPlanning(root, noChanges, epsilon);
+    applyLocalPathPlanning(root, {}, epsilon);
 
     // Simulate environment changes and reapply local path planning (if needed)
     for (int step = 0; step < numSteps; ++step) {
@@ -1185,7 +1161,7 @@ void testLocalPathPlanning(MazeNode *root, const int numSteps, const int testEpi
 
         // Track changed positions during environment changes
         vector<pair<int, int> > changedPositions;
-        simulateEnvironmentChanges(root, 3, changedPositions);
+        simulateEnvironmentChanges(root, 1, changedPositions);
 
         // Apply local path planning based on changes
         applyLocalPathPlanning(root, changedPositions, epsilon);
@@ -1208,12 +1184,14 @@ int main() {
     // Create the root node and sub-environments
     MazeNode *root = createSubEnvironments(maze);
 
-    // Test the second approach: Local path planning in leaf nodes
     const int numSteps = 10; // Number of simulation steps
     const int testEpisodes = 10; // Number of test episodes
 
+    // Test the first approach: Global Q-learning (MasMat)
+    testMasMat(root, numSteps, testEpisodes);
+
+    // Test the second approach: Local path planning in leaf nodes
     testLocalPathPlanning(root, numSteps, testEpisodes);
-    // testMasMat(root, numSteps, testEpisodes);
 
     // Cleanup
     delete root;
