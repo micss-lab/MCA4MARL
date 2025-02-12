@@ -10,7 +10,9 @@
 #include <iomanip>
 #include <iostream>
 #include <queue>
+#include <random>
 #include <thread>
+#include <tuple>
 #include <unordered_set>
 #include <vector>
 
@@ -39,6 +41,7 @@
 #define OBSTACLE 0
 #define FREE_SPACE 1
 #define CHARGING_STATION 2
+#define AGENT 3
 
 #define MAX_STEPS_PER_EPISODE 100
 #define EPISODE_COUNT 500'000
@@ -1424,6 +1427,118 @@ void runExperiment(const int rows, const int cols, const double freeSpaceProb, c
     // Deallocate memory for the root nodes
     delete root;
     delete rootCopy;
+}
+
+const vector<pair<int, int>> ACTIONS = {{-1, 0}, {-1, 1}, {0, 1}, {1, 1}, {1, 0}, {1, -1}, {0, -1}, {-1, -1}};
+
+//*************************************************************************/
+class Agent {
+public:
+    int row, col;
+    MazeNode *subEnv;
+
+    Agent(int r, int c, MazeNode *env) : row(r), col(c), subEnv(env) {}
+
+    int selectAction(double epsilon) {
+        random_device rd; mt19937 gen(rd()); uniform_real_distribution<> dis(0, 1);
+        if (dis(gen) < epsilon) return rand() % ACTION_COUNT;
+        return max_element(subEnv->qTable[row][col].begin(), subEnv->qTable[row][col].end()) - subEnv->qTable[row][col].begin();
+    }
+
+    pair<int, int> step(int action) {
+        int new_row = row + ACTIONS[action].first;
+        int new_col = col + ACTIONS[action].second;
+
+        // Check if movement is valid
+        if (new_row >= 0 && new_row < subEnv->rows &&
+            new_col >= 0 && new_col < subEnv->cols &&
+            subEnv->maze[new_row][new_col] != OBSTACLE) {
+
+            row = new_row;
+            col = new_col;
+
+            // Check if the agent moved into a different subenvironment
+            MazeNode *newSubEnv = subEnv->parent->findSubEnvironment(row, col);
+            if (newSubEnv && newSubEnv != subEnv) {
+                subEnv = newSubEnv; // Update the agent's subenvironment
+            }
+        }
+        return {row, col};
+    }
+
+    vector<pair<int, int>> findOptimalPath() {
+        vector<pair<int, int>> path;
+        while (subEnv->maze[row][col] != CHARGING_STATION) {
+            path.emplace_back(row, col);
+
+            // Select action based on the current subenvironment's Q-table
+            int action = selectAction(0.0);
+            pair<int, int> newPos = step(action);
+
+            // Check if the new position falls into a different subenvironment
+            MazeNode *newSubEnv = subEnv->parent->findSubEnvironment(newPos.first, newPos.second);
+            if (newSubEnv && newSubEnv != subEnv) {
+                subEnv = newSubEnv;
+            }
+        }
+        path.emplace_back(row, col);
+        return path;
+    }
+};
+
+//*************************************************************************/
+class VDNTrainer {
+public:
+    vector<Agent *> agents;
+    double learning_rate = 0.1;
+    double discount_factor = 0.9;
+
+    void updateGlobalQValues(vector<double> rewards, vector<pair<int, int>> next_positions, vector<int> actions) {
+        double joint_q = 0.0;
+        for (size_t i = 0; i < agents.size(); i++) {
+            joint_q += *max_element(agents[i]->subEnv->qTable[next_positions[i].first][next_positions[i].second].begin(),
+                                    agents[i]->subEnv->qTable[next_positions[i].first][next_positions[i].second].end());
+        }
+        joint_q /= agents.size();
+
+        for (size_t i = 0; i < agents.size(); i++) {
+            int action = actions[i];
+            double &q_value = agents[i]->subEnv->qTable[agents[i]->row][agents[i]->col][action];
+            q_value += learning_rate * (rewards[i] + discount_factor * joint_q - q_value);
+        }
+    }
+};
+
+//*************************************************************************/
+void trainVDN(VDNTrainer &trainer, MazeNode &root, int episodes, double epsilon) {
+    random_device rd;
+    mt19937 gen(rd());
+    uniform_int_distribution<> rowDist(0, root.rows - 1);
+    uniform_int_distribution<> colDist(0, root.cols - 1);
+
+    for (int episode = 0; episode < episodes; episode++) {
+        vector<pair<int, int>> start_positions;
+        for (Agent *agent : trainer.agents) {
+            agent->row = rowDist(gen);
+            agent->col = colDist(gen);
+            start_positions.emplace_back(agent->row, agent->col);
+        }
+
+        for (int step = 0; step < 100; step++) { // Limit steps per episode
+            vector<int> actions;
+            vector<pair<int, int>> next_positions;
+            vector<double> rewards;
+
+            for (Agent *agent : trainer.agents) {
+                int action = agent->selectAction(epsilon);
+                actions.push_back(action);
+                next_positions.push_back(agent->step(action));
+                rewards.push_back(-1.0); // Example reward (modify as needed)
+            }
+
+            trainer.updateGlobalQValues(rewards, next_positions, actions);
+        }
+    }
 }
 
 int main() {
