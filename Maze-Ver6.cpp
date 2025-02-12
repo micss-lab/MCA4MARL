@@ -4,10 +4,12 @@
 /*          0: means the obstacle  1:means the feasible moving  2:means the charge station          */
 /****************************************************************************************************/
 
+#include <algorithm>
 #include <cmath>
 #include <cstdlib>
 #include <iomanip>
 #include <iostream>
+#include <queue>
 #include <thread>
 #include <unordered_set>
 #include <vector>
@@ -122,6 +124,21 @@ public:
         return nullptr; // Should not reach here if tree is properly constructed
     }
 };
+
+//*************************************************************************/
+MazeNode *deepCopyMazeTree(MazeNode *node) {
+    if (!node) return nullptr;
+
+    // Create a new node and copy data
+    auto *newNode = new MazeNode(*node);
+
+    // Recursively copy children
+    for (MazeNode *child: node->children) {
+        newNode->children.push_back(deepCopyMazeTree(child));
+    }
+
+    return newNode;
+}
 
 /**************************************************************************/
 void createMaze(vector<vector<int> > &maze, const int rows, const int cols, const double freeSpaceProb,
@@ -280,8 +297,7 @@ int selectAction(const vector<vector<vector<double> > > &qTable, const int x, co
 
 //*************************************************************************/
 int selectActionWithSoftBoundaries(const vector<vector<vector<double> > > &qTable, const int rows, const int cols,
-                                   const int x,
-                                   const int y, const double epsilon) {
+                                   const int x, const int y, const double epsilon) {
     int action;
     const double randomValue = static_cast<double>(rand()) / RAND_MAX;
 
@@ -663,12 +679,12 @@ void trainAgentWithStoppingCriterion(const vector<vector<int> > &maze, vector<ve
     vector<vector<vector<double> > > prevQTable = qTable;
 
     // Epsilon decay parameters
-    constexpr double epsilon_min = 0.001;
-    constexpr double lambda = 1e-8; // Adjust based on testing
+    constexpr double epsilon_min = 1e-3;
+    constexpr double lambda = 1e-9; // Adjust based on testing
 
     // Convergence parameters
-    constexpr double threshold = 1e-5;
-    constexpr int patience = 30;
+    constexpr double threshold = 1e-6;
+    constexpr int patience = 50;
 
     // Start the training process (generate episodes)
     for (counter = 0; !converged; counter++) {
@@ -727,8 +743,7 @@ void trainAgentWithStoppingCriterion(const vector<vector<int> > &maze, vector<ve
 //*************************************************************************/
 tuple<double, double, double> testAgent(const vector<vector<int> > &maze,
                                         const vector<vector<vector<double> > > &qTable,
-                                        const int rows, const int cols,
-                                        const int nrTestEpisodes) {
+                                        const int rows, const int cols, const int nrTestEpisodes) {
     // Keep track of statistics
     double totalPlanningTime = 0.0;
     int successfulPaths = 0;
@@ -1073,29 +1088,172 @@ void simulateEnvironmentChanges(MazeNode *root, const int numSteps, vector<pair<
 }
 
 //*************************************************************************/
-void testMasMat(MazeNode *root, const int numSteps, const int testEpisodes) {
-    // Apply MasMat before any changes in the environment (initial training)
-    constexpr double epsilon = 1.0; // Exploration parameter for Q-learning
-    masMat(root, {}, epsilon);
+struct Node {
+    int x, y, steps;
+};
 
-    // Simulate environment changes and test MasMat
-    for (int step = 0; step < numSteps; ++step) {
-        cout << "\nStep " << step + 1 << ":\n";
+//*************************************************************************/
+pair<int, vector<pair<int, int> > > shortestPathToChargingStation(const vector<vector<int> > &maze, int startX,
+                                                                  int startY) {
+    const int rows = maze.size();
+    const int cols = maze[0].size();
 
-        // Track changed positions during environment changes
-        vector<pair<int, int> > changedPositions;
-        simulateEnvironmentChanges(root, 1, changedPositions);
+    // Directions for moving in 8 possible ways (up, down, left, right, and diagonals)
+    vector<pair<int, int> > directions = {
+        {-1, 0}, {1, 0}, {0, -1}, {0, 1}, // Up, Down, Left, Right
+        {-1, -1}, {-1, 1}, {1, -1}, {1, 1} // Diagonal moves
+    };
 
-        // Apply the MasMat algorithm
-        masMat(root, changedPositions, epsilon);
+    // Queue for BFS
+    queue<Node> q;
+    q.push({startX, startY, 0});
 
-        // Optionally print the updated maze for debugging
-        printMatrixInt(root->maze, root->rows, root->cols, "Maze after step:");
+    // Visited grid and parent tracking
+    vector<vector<bool> > visited(rows, vector<bool>(cols, false));
+    vector<vector<pair<int, int> > > parent(rows, vector<pair<int, int> >(cols, {-1, -1}));
+
+    visited[startX][startY] = true;
+
+    while (!q.empty()) {
+        Node current = q.front();
+        q.pop();
+
+        // Check if we reached a charging station
+        if (maze[current.x][current.y] == CHARGING_STATION) {
+            // Backtrack to reconstruct the path
+            vector<pair<int, int> > path;
+            int x = current.x, y = current.y;
+            while (x != startX || y != startY) {
+                path.emplace_back(x, y);
+                tie(x, y) = parent[x][y];
+            }
+            path.emplace_back(startX, startY); // Add start position
+            reverse(path.begin(), path.end()); // Reverse to get the correct order
+
+            return {current.steps, path}; // Return shortest path length and path itself
+        }
+
+        // Explore all 8 possible moves
+        for (auto [dx, dy]: directions) {
+            const int newX = current.x + dx;
+            const int newY = current.y + dy;
+
+            // Check if the new position is valid
+            if (newX >= 0 && newX < rows && newY >= 0 && newY < cols &&
+                !visited[newX][newY] && maze[newX][newY] != OBSTACLE) {
+                // Assuming 1 represents obstacles
+                visited[newX][newY] = true;
+                parent[newX][newY] = {current.x, current.y}; // Track parent
+                q.push({newX, newY, current.steps + 1});
+            }
+        }
     }
 
+    return {-1, {}}; // No path found to any charging station
+}
+
+//*************************************************************************/
+tuple<double, double, double, double, double, double, double> testAgentWithOptimalComparison(
+    const vector<vector<int> > &maze, const vector<vector<vector<double> > > &qTable, const int rows, const int cols,
+    const int nrTestEpisodes) {
+    double totalPlanningTime = 0.0;
+    int successfulPaths = 0;
+    int bfsSuccessCount = 0;
+    int totalSteps = 0;
+    int totalExtraSteps = 0;
+    int totalOptimalSteps = 0;
+
+    for (int test = 0; test < nrTestEpisodes; test++) {
+        int x1, y1;
+        tie(x1, y1) = selectFirstPlace(maze, 0, 0, rows - 1, cols - 1);
+
+        // Compute the shortest path using BFS
+        auto [optimalPathLength, optimalPath] = shortestPathToChargingStation(maze, x1, y1);
+        if (optimalPathLength == -1) continue; // No valid path
+        bfsSuccessCount++;
+
+        auto start = chrono::high_resolution_clock::now();
+        int steps = 0;
+        bool success = false;
+
+        while (steps < MAX_STEPS_PER_EPISODE) {
+            int act = selectActionWithSoftBoundaries(qTable, rows, cols, x1, y1, 0.0);
+            int x2, y2;
+            double actionReward;
+            tie(x2, y2, act, actionReward) = performAction(maze, rows, cols, x1, y1, act);
+            steps++;
+
+            if (checkExit(maze, x2, y2)) {
+                success = true;
+                break;
+            }
+
+            x1 = x2;
+            y1 = y2;
+        }
+
+        auto end = chrono::high_resolution_clock::now();
+        totalPlanningTime += chrono::duration<double>(end - start).count();
+
+        if (success) {
+            successfulPaths++;
+            totalSteps += steps;
+            totalExtraSteps += (steps - optimalPathLength);
+            totalOptimalSteps += optimalPathLength;
+        }
+    }
+
+    double successRate = static_cast<double>(successfulPaths) / nrTestEpisodes;
+    double bfsSuccessRate = static_cast<double>(bfsSuccessCount) / nrTestEpisodes;
+    double avgPathLength = successfulPaths > 0 ? static_cast<double>(totalSteps) / successfulPaths : 0.0;
+    double avgOptimalPathLength = successfulPaths > 0 ? static_cast<double>(totalOptimalSteps) / successfulPaths : 0.0;
+    double avgPlanningTime = totalPlanningTime / nrTestEpisodes;
+    double avgExtraSteps = successfulPaths > 0 ? static_cast<double>(totalExtraSteps) / successfulPaths : 0.0;
+    double pctIncrease = (avgExtraSteps / avgOptimalPathLength) * 100.0;
+
+    return make_tuple(avgPlanningTime, successRate, bfsSuccessRate, avgPathLength, avgOptimalPathLength,
+                      totalExtraSteps, pctIncrease);
+}
+
+//*************************************************************************/
+void testMasMat(MazeNode *root, const int numSteps, const int testEpisodes) {
+    constexpr double epsilon = 1.0; // Exploration parameter for Q-learning
+
+    // Measure MasMat efficiency (before environment change)
+    srand(42);
+    auto start = chrono::high_resolution_clock::now();
+    masMat(root, {}, epsilon);
+    auto end = chrono::high_resolution_clock::now();
+    const double masMatStaticTime = chrono::duration<double>(end - start).count();
+
+    // Simulate environment changes
+    srand(42);
+    vector<pair<int, int> > changedPositions;
+    simulateEnvironmentChanges(root, numSteps, changedPositions);
+
+    // Measure MasMat efficiency (after environment change)
+    srand(42);
+    start = chrono::high_resolution_clock::now();
+    masMat(root, changedPositions, epsilon);
+    end = chrono::high_resolution_clock::now();
+    const double masMatDynamicTime = chrono::duration<double>(end - start).count();
+
     // Test the agent's performance after applying MasMat
-    cout << "Testing the agent's performance:\n";
-    testAgent(root->maze, root->qTable, root->rows, root->cols, testEpisodes);
+    srand(42);
+    auto [masMatPlanningTime, masMatSuccessRate, bfsSuccessRate, masMatAvgPath, masMatOptimalAvgPath,
+        masMatExtraStepOccurrences, masMatPctIncrease] = testAgentWithOptimalComparison(
+        root->maze, root->qTable, root->rows, root->cols, testEpisodes);
+
+    cout << "\n--- MasMat Results ---\n";
+    cout << "Static Training Time     : " << masMatStaticTime << "s\n";
+    cout << "Dynamic Training Time    : " << masMatDynamicTime << "s\n";
+    cout << "Average Planning Time    : " << masMatPlanningTime << "s\n";
+    cout << "Success Rate             : " << masMatSuccessRate * 100 << "%\n";
+    cout << "BFS Success Rate         : " << bfsSuccessRate * 100 << "%\n";
+    cout << "Average Path Length      : " << masMatAvgPath << " steps\n";
+    cout << "Average Optimal Path Len : " << masMatOptimalAvgPath << " steps\n";
+    cout << "Extra Steps (vs Optimal) : " << masMatExtraStepOccurrences << " steps\n";
+    cout << "Path Length Increase     : " << masMatPctIncrease << "%\n";
 }
 
 //*************************************************************************/
@@ -1187,7 +1345,7 @@ void applyLocalPathPlanning(MazeNode *root, const vector<pair<int, int> > &chang
         }
 
         // Convert the unordered_set to a vector
-        vector<MazeNode *> affectedLeafNodes(uniqueAffectedNodes.begin(), uniqueAffectedNodes.end());
+        const vector<MazeNode *> affectedLeafNodes(uniqueAffectedNodes.begin(), uniqueAffectedNodes.end());
 
         // Apply local path planning to affected leaf nodes
         if (!affectedLeafNodes.empty()) {
@@ -1201,129 +1359,109 @@ void applyLocalPathPlanning(MazeNode *root, const vector<pair<int, int> > &chang
 
 //*************************************************************************/
 void testLocalPathPlanning(MazeNode *root, const int numSteps, const int testEpisodes) {
-    cout << "\nTesting the second approach: Local path planning in leaf nodes\n";
-
-    // Initial local path planning and propagation upwards
     constexpr double epsilon = 1.0; // Exploration parameter for Q-learning
+
+    // Measure Local Path Planning efficiency (before environment change)
+    srand(42);
+    auto start = chrono::high_resolution_clock::now();
     applyLocalPathPlanning(root, {}, epsilon);
+    auto end = chrono::high_resolution_clock::now();
+    const double localStaticTime = chrono::duration<double>(end - start).count();
 
     // Simulate environment changes and reapply local path planning (if needed)
-    for (int step = 0; step < numSteps; ++step) {
-        cout << "\nStep " << step + 1 << ":\n";
+    srand(42);
+    vector<pair<int, int> > changedPositions;
+    simulateEnvironmentChanges(root, numSteps, changedPositions);
 
-        // Track changed positions during environment changes
-        vector<pair<int, int> > changedPositions;
-        simulateEnvironmentChanges(root, 1, changedPositions);
-
-        // Apply local path planning based on changes
-        applyLocalPathPlanning(root, changedPositions, epsilon);
-
-        // Optionally print the updated maze for debugging
-        printMatrixInt(root->maze, root->rows, root->cols, "Maze after step:");
-    }
+    // Measure Local Path Planning efficiency (after environment change)
+    srand(42);
+    start = chrono::high_resolution_clock::now();
+    applyLocalPathPlanning(root, changedPositions, epsilon);
+    end = chrono::high_resolution_clock::now();
+    const double localDynamicTime = chrono::duration<double>(end - start).count();
 
     // Test the agent's performance after applying local path planning
-    cout << "Testing the agent's performance:\n";
-    testAgent(root->maze, root->qTable, root->rows, root->cols, testEpisodes);
+    srand(42);
+    auto [localPlanningTime, localSuccessRate, bfsSuccessRate, localAvgPath, localOptimalAvgPath,
+                localExtraStepOccurrences,
+                localPctIncrease] =
+            testAgentWithOptimalComparison(root->maze, root->qTable, root->rows, root->cols, testEpisodes);
+
+    cout << "\n--- Local Path Planning Results ---\n";
+    cout << "Static Training Time     : " << localStaticTime << "s\n";
+    cout << "Dynamic Training Time    : " << localDynamicTime << "s\n";
+    cout << "Average Planning Time    : " << localPlanningTime << "s\n";
+    cout << "Success Rate             : " << localSuccessRate * 100 << "%\n";
+    cout << "BFS Success Rate         : " << bfsSuccessRate * 100 << "%\n";
+    cout << "Average Path Length      : " << localAvgPath << " steps\n";
+    cout << "Average Optimal Path Len : " << localOptimalAvgPath << " steps\n";
+    cout << "Extra Steps (vs Optimal) : " << localExtraStepOccurrences << " steps\n";
+    cout << "Path Length Increase     : " << localPctIncrease << "%\n";
 }
 
 //*************************************************************************/
 void runExperiment(const int rows, const int cols, const double freeSpaceProb, const double obstacleProb,
-                   const double wallProb, const int numChanges) {
-    srand(42); // Fixed random seed for fair comparison
-
+                   const double chargingStationProb, const int numChanges) {
     // Create and initialize the maze
     auto maze = vector<vector<int> >(rows, vector<int>(cols, 0));
-    createMaze(maze, rows, cols, freeSpaceProb, obstacleProb, wallProb);
+    createMaze(maze, rows, cols, freeSpaceProb, obstacleProb, chargingStationProb);
+
+    // Create the root nodes
     MazeNode *root = createSubEnvironments(maze, rows, cols);
+    MazeNode *rootCopy = createSubEnvironments(maze, rows, cols);
 
-    constexpr int testEpisodes = 100; // Number of test episodes
-
-    // Measure MasMat efficiency (before environment change)
-    auto start = chrono::high_resolution_clock::now();
-    masMat(root, {}, 1.0); // Static training
-    auto end = chrono::high_resolution_clock::now();
-    const double masMatStaticTime = chrono::duration<double>(end - start).count();
-
-    // Measure Local Path Planning efficiency (before environment change)
-    start = chrono::high_resolution_clock::now();
-    applyLocalPathPlanning(root, {}, 1.0); // Static training
-    end = chrono::high_resolution_clock::now();
-    const double localStaticTime = chrono::duration<double>(end - start).count();
-
-    // Simulate environment change
-    vector<pair<int, int> > changedPositions;
-    simulateEnvironmentChanges(root, numChanges, changedPositions);
-
-    // Measure MasMat efficiency (after environment change)
-    start = chrono::high_resolution_clock::now();
-    masMat(root, changedPositions, 1.0);
-    end = chrono::high_resolution_clock::now();
-    const double masMatDynamicTime = chrono::duration<double>(end - start).count();
-
-    // Measure Local Path Planning efficiency (after environment change)
-    start = chrono::high_resolution_clock::now();
-    applyLocalPathPlanning(root, changedPositions, 1.0);
-    end = chrono::high_resolution_clock::now();
-    const double localDynamicTime = chrono::duration<double>(end - start).count();
-
-    // Measure planning time and path effectiveness
-    auto [masMatPlanningTime, masMatSuccessRate, masMatAvgPath] = testAgent(
-        root->maze, root->qTable, root->rows, root->cols, testEpisodes);
-    auto [localPlanningTime, localSuccessRate, localAvgPath] = testAgent(
-        root->maze, root->qTable, root->rows, root->cols, testEpisodes);
-
-    // Output results
+    // Output Maze size
     cout << "\nMaze Size: " << rows << "x" << cols << "\n";
 
-    cout << "\n--- MasMat Results ---\n";
-    cout << "Static Training Time   : " << masMatStaticTime << "s\n";
-    cout << "Dynamic Training Time  : " << masMatDynamicTime << "s\n";
-    cout << "Average Planning Time  : " << masMatPlanningTime << "s\n";
-    cout << "Success Rate           : " << masMatSuccessRate * 100 << "%\n";
-    cout << "Average Path Length    : " << masMatAvgPath << " steps\n";
+    constexpr int testEpisodes = 1'000; // Number of test episodes
 
-    cout << "\n--- Local Path Planning Results ---\n";
-    cout << "Static Training Time   : " << localStaticTime << "s\n";
-    cout << "Dynamic Training Time  : " << localDynamicTime << "s\n";
-    cout << "Average Planning Time  : " << localPlanningTime << "s\n";
-    cout << "Success Rate           : " << localSuccessRate * 100 << "%\n";
-    cout << "Average Path Length    : " << localAvgPath << " steps\n";
+    // Measure planning time, path effectiveness, and compare with optimal paths
+    testMasMat(root, numChanges, testEpisodes);
 
+    // Measure planning time, path effectiveness, and compare with optimal paths
+    testLocalPathPlanning(rootCopy, numChanges, testEpisodes);
+
+    // Deallocate memory for the root nodes
     delete root;
+    delete rootCopy;
 }
 
 int main() {
     // Run experiments with different maze sizes and obstacle densities
     runExperiment(10, 10, 0.8, 0.18, 0.02, 1);
-    runExperiment(10, 10, 0.8, 0.18, 0.02, 2);
+    runExperiment(10, 10, 0.8, 0.19, 0.01, 3);
     runExperiment(10, 10, 0.6, 0.38, 0.02, 1);
-    runExperiment(10, 10, 0.6, 0.38, 0.02, 2);
+    runExperiment(10, 10, 0.6, 0.39, 0.01, 3);
 
     runExperiment(20, 20, 0.8, 0.18, 0.02, 1);
-    runExperiment(20, 20, 0.8, 0.18, 0.02, 4);
+    runExperiment(20, 20, 0.8, 0.19, 0.01, 5);
     runExperiment(20, 20, 0.6, 0.38, 0.02, 1);
-    runExperiment(20, 20, 0.6, 0.38, 0.02, 4);
+    runExperiment(20, 20, 0.6, 0.39, 0.01, 5);
 
     runExperiment(50, 50, 0.8, 0.18, 0.02, 1);
-    runExperiment(50, 50, 0.8, 0.18, 0.02, 8);
+    runExperiment(50, 50, 0.8, 0.19, 0.01, 8);
     runExperiment(50, 50, 0.6, 0.38, 0.02, 1);
-    runExperiment(50, 50, 0.6, 0.38, 0.02, 8);
+    runExperiment(50, 50, 0.6, 0.39, 0.01, 8);
+
+    runExperiment(80, 80, 0.8, 0.18, 0.02, 1);
+    runExperiment(80, 80, 0.8, 0.19, 0.01, 10);
+    runExperiment(80, 80, 0.6, 0.38, 0.02, 1);
+    runExperiment(80, 80, 0.6, 0.39, 0.01, 10);
 
     runExperiment(100, 100, 0.8, 0.18, 0.02, 1);
-    runExperiment(100, 100, 0.8, 0.18, 0.02, 10);
+    runExperiment(100, 100, 0.8, 0.19, 0.01, 15);
     runExperiment(100, 100, 0.6, 0.38, 0.02, 1);
-    runExperiment(100, 100, 0.6, 0.38, 0.02, 10);
+    runExperiment(100, 100, 0.6, 0.39, 0.01, 15);
 
     runExperiment(150, 150, 0.8, 0.18, 0.02, 1);
-    runExperiment(150, 150, 0.8, 0.18, 0.02, 10);
+    runExperiment(150, 150, 0.8, 0.19, 0.01, 20);
     runExperiment(150, 150, 0.6, 0.38, 0.02, 1);
-    runExperiment(150, 150, 0.6, 0.38, 0.02, 10);
+    runExperiment(150, 150, 0.6, 0.39, 0.01, 20);
 
     runExperiment(200, 200, 0.8, 0.18, 0.02, 1);
-    runExperiment(200, 200, 0.8, 0.18, 0.02, 10);
+    runExperiment(200, 200, 0.8, 0.19, 0.01, 30);
     runExperiment(200, 200, 0.6, 0.38, 0.02, 1);
-    runExperiment(200, 200, 0.6, 0.38, 0.02, 10);
+    runExperiment(200, 200, 0.6, 0.39, 0.01, 30);
 
     return 0;
 }
