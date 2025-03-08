@@ -46,9 +46,9 @@
 #define CHARGING_STATION 2
 #define AGENT 3
 
-#define MAX_STEPS_PER_EPISODE 100
+#define MAX_STEPS_PER_EPISODE 50
 #define EPISODE_COUNT 500'000
-#define LEARNING_RATE 0.2
+#define LEARNING_RATE 0.3
 #define DISCOUNT_FACTOR 0.9
 
 /**************************************************************************/
@@ -238,8 +238,8 @@ int checkExit(const vector<vector<int> > &matrix, const int x, const int y) {
 
 /**************************************************************************/
 pair<int, int> selectFirstPlace(const vector<vector<int> > &maze, const int startRow, const int startCol,
-                                 const int endRow,
-                                 const int endCol) {
+                                const int endRow,
+                                const int endCol) {
     int x, y;
     // Keep generating random indices until a free space is found
     do {
@@ -349,14 +349,13 @@ int selectActionWithSoftBoundaries(const vector<vector<vector<double> > > &qTabl
 }
 
 /**************************************************************************/
-tuple<int, int, int, double> performAction(const vector<vector<int> > &maze, const int rows, const int cols,
-                                           const int x1,
-                                           const int y1, const int action) {
+tuple<int, int, int, double> performAction(const vector<vector<int>>& maze, const int rows, const int cols,
+                                           const int x1, const int y1, const int action) {
     double reward = 0.0;
     int changePos = 0;
     int x2 = x1, y2 = y1;
 
-    // Perform the selected action
+    // Perform the selected action (unchanged logic)
     switch (action) {
         case 0: // Move N
             if (x1 > 0 && (maze[x1 - 1][y1] == FREE_SPACE || maze[x1 - 1][y1] == CHARGING_STATION)) {
@@ -418,13 +417,13 @@ tuple<int, int, int, double> performAction(const vector<vector<int> > &maze, con
             break;
     }
 
-    // Reward system
+    // Improved reward system
     if (maze[x2][y2] == CHARGING_STATION) {
-        reward = 30.0; // Larger reward for charging station
+        reward = 100.0; // Large reward for reaching the goal
     } else if (changePos == 0) {
-        reward = -10.0; // Penalty for bumping into an obstacle
+        reward = -20.0; // Stronger penalty for hitting obstacles
     } else {
-        reward = -1.0; // Step penalty
+        reward = -2.0;  // Increased step penalty to encourage shorter paths
     }
 
     return make_tuple(x2, y2, action, reward);
@@ -674,54 +673,71 @@ void trainAgentWithSoftBoundaries(const vector<vector<int> > &maze, vector<vecto
 void trainAgentWithStoppingCriterion(const vector<vector<int> > &maze, vector<vector<vector<double> > > &qTable,
                                      const int rows, const int cols, const int startRow, const int startCol,
                                      const int endRow, const int endCol, double epsilon) {
-    // Global-sized path array for updates
     auto path = vector<vector<int> >(rows, vector<int>(cols, 0));
-    int arrival = 0, x1, y1, x2, y2, iteration = 0, counter = 0;
+    int arrival = 0, x1, y1, x2, y2, iteration = 0, counter = 0, stableEpisodes = 0;
     double actionReward = 0;
-    int stableEpisodes = 0;
     bool converged = false;
-
-    // Create a backup Q-table for comparison
     vector<vector<vector<double> > > prevQTable = qTable;
 
     // Convergence parameters
-    constexpr double threshold = 1e-6;
-    constexpr int patience = 50;
+    constexpr double threshold = 5e-4;
+    constexpr int patience = 10;     // 10 stable checks (500 episodes) for robustness
+    constexpr double lambda = 1e-3;
+    constexpr double epsilon_min = 1e-3;
+    constexpr int minEpisodes = 200; // Allow earlier checks but ensure learning
 
-    // Start the training process (generate episodes)
+    // Success tracking
+    constexpr int windowSize = 50;
+    vector<int> successWindow(windowSize, 0);
+    int windowIndex = 0, successCount = 0;
+
+    // Experience replay buffer
+    struct Experience {
+        int x1, y1, action;
+        double reward;
+        int x2, y2;
+    };
+    vector<Experience> replayBuffer;
+    constexpr int bufferSize = 1000;
+    replayBuffer.reserve(bufferSize);
+    constexpr int batchSize = 64;
+
     for (counter = 0; !converged; counter++) {
-        // Epsilon decay parameters
-        constexpr double lambda = 1e-9;
-        constexpr double epsilon_min = 1e-3;
-
-        // Select a random starting place within the sub-environment
         tie(x1, y1) = selectFirstPlace(maze, startRow, startCol, endRow, endCol);
         iteration = 1;
 
         while (arrival == 0 && iteration < MAX_STEPS_PER_EPISODE) {
-            // Select an action using an epsilon-greedy policy
             int act = selectActionWithSoftBoundaries(qTable, rows, cols, x1, y1, epsilon);
-
-            // Perform the selected action and get the associated reward
             tie(x2, y2, act, actionReward) = performAction(maze, rows, cols, x1, y1, act);
             detectPath(maze, path, x1, y1);
 
-            // Update the Q-table
+            replayBuffer.push_back({x1, y1, act, actionReward, x2, y2});
+            if (replayBuffer.size() > bufferSize) replayBuffer.erase(replayBuffer.begin());
             updateQTable(qTable, x1, y1, act, actionReward, x2, y2);
 
-            // Check if the exit condition is met within the sub-environment
+            if (replayBuffer.size() >= batchSize && counter > minEpisodes) {
+                for (int i = 0; i < batchSize; i++) {
+                    int idx = rand() % replayBuffer.size();
+                    const auto& exp = replayBuffer[idx];
+                    updateQTable(qTable, exp.x1, exp.y1, exp.action, exp.reward, exp.x2, exp.y2);
+                }
+            }
+
             arrival = checkExit(maze, x2, y2);
             x1 = x2;
             y1 = y2;
             iteration++;
         }
 
-        // Apply exponential decay to epsilon
-        epsilon = epsilon_min + (epsilon - epsilon_min) * exp(-lambda * counter);
-        arrival = 0; // Reset arrival for the next episode
+        successCount -= successWindow[windowIndex];
+        successWindow[windowIndex] = (arrival == 1) ? 1 : 0;
+        successCount += successWindow[windowIndex];
+        windowIndex = (windowIndex + 1) % windowSize;
 
-        // Check stopping criterion every 10 episodes (to reduce computation cost)
-        if (counter % 10 == 0) {
+        epsilon = epsilon_min + (1.0 - epsilon_min) * exp(-lambda * counter);
+        arrival = 0;
+
+        if (counter % 50 == 0 && counter >= max(windowSize, minEpisodes)) {
             double maxChange = 0.0;
             for (int i = startRow; i <= endRow; i++) {
                 for (int j = startCol; j <= endCol; j++) {
@@ -731,23 +747,48 @@ void trainAgentWithStoppingCriterion(const vector<vector<int> > &maze, vector<ve
                 }
             }
 
-            if (maxChange < threshold) {
+            if (successCount == windowSize || (maxChange < threshold && stableEpisodes >= patience)) {
+                converged = true;
+            } else if (maxChange < threshold) {
                 stableEpisodes++;
-                if (stableEpisodes >= patience) {
-                    converged = true;
-                }
             } else {
                 stableEpisodes = 0;
             }
-
-            prevQTable = qTable; // Update the previous Q-table
+            prevQTable = qTable;
         }
     }
-    cout << "The Agent Has Converged After " << counter << " Episodes\n";
+
+    // Post-training validation (ensure learned policy, not random)
+    if (converged) {
+        int testSuccesses = 0;
+        for (int t = 0; t < 50; t++) { // Match windowSize
+            tie(x1, y1) = selectFirstPlace(maze, startRow, startCol, endRow, endCol);
+            iteration = 1; arrival = 0;
+            while (arrival == 0 && iteration < MAX_STEPS_PER_EPISODE) {
+                int act = selectActionWithSoftBoundaries(qTable, rows, cols, x1, y1, 0.0);
+                tie(x2, y2, act, actionReward) = performAction(maze, rows, cols, x1, y1, act);
+                arrival = checkExit(maze, x2, y2);
+                x1 = x2; y1 = y2; iteration++;
+            }
+            if (arrival == 1) testSuccesses++;
+        }
+        if (testSuccesses < 50) {
+            converged = false;
+            counter += 200; // Extend training significantly
+            cout << "Resuming training for learned policy (only " << testSuccesses << "/50 successes)...\n";
+        }
+    }
+
+    if (converged) {
+        cout << "The Agent Has Converged After " << counter << " Episodes with Success Rate: "
+                << (successCount * 100.0 / windowSize) << "%\n";
+    }
 }
 
 //*************************************************************************/
-tuple<double, double, double> testAgent(const vector<vector<int> > &maze, const vector<vector<vector<double> > > &qTable, const int rows, const int cols, const int nrTestEpisodes) {
+tuple<double, double, double> testAgent(const vector<vector<int> > &maze,
+                                        const vector<vector<vector<double> > > &qTable, const int rows, const int cols,
+                                        const int nrTestEpisodes) {
     // Keep track of statistics
     double totalPlanningTime = 0.0;
     int successfulPaths = 0;
@@ -887,8 +928,8 @@ MazeNode *createSubEnvironments(const vector<vector<int> > &maze, const int rows
     splitMaze(root, maze, rows, cols, 0, 0, rows - 1, cols - 1);
 
     // Print the tree structure
-    cout << "\n\nMaze Sub-environment Tree:\n\n";
-    printTree(root);
+    // cout << "\n\nMaze Sub-environment Tree:\n\n";
+    // printTree(root);
 
     // Return the root node to the caller
     return root;
@@ -983,15 +1024,16 @@ void masMat(MazeNode *root, const vector<pair<int, int> > &changedPositions, con
     // If no changes, apply global Q-learning
     if (changedPositions.empty()) {
         cout << "\nEnvironment is static. Applying global Q-learning.\n";
-        auto rootQTable = vector<vector<vector<double> > >(
-            root->rows, vector<vector<double> >(root->cols, vector<double>(ACTION_COUNT, 0.0)));
+        // auto rootQTable = vector<vector<vector<double> > >(
+        //     root->rows, vector<vector<double> >(root->cols, vector<double>(ACTION_COUNT, 0.0)));
 
         // Train the agent on the root environment
-        trainAgentWithStoppingCriterion(root->maze, rootQTable, root->rows, root->cols, root->startRow, root->startCol,
+        trainAgentWithStoppingCriterion(root->maze, root->qTable, root->rows, root->cols, root->startRow,
+                                        root->startCol,
                                         root->endRow, root->endCol, epsilon);
 
         // Copy the Q-table results to the leaf node
-        copyQTableToNode(root, rootQTable);
+        copyQTableToNode(root, root->qTable);
 
         // Propagate the Q-table results from the root to all sub-environments
         propagateQTableDownwards(root);
@@ -1010,15 +1052,16 @@ void masMat(MazeNode *root, const vector<pair<int, int> > &changedPositions, con
 
     // Train each affected node and propagate the results upwards
     for (MazeNode *node: affectedNodes) {
-        auto subQTable = vector<vector<vector<double> > >(
-            node->rows, vector<vector<double> >(node->cols, vector<double>(ACTION_COUNT, 0.0)));
+        // auto subQTable = vector<vector<vector<double> > >(
+        //     node->rows, vector<vector<double> >(node->cols, vector<double>(ACTION_COUNT, 0.0)));
 
         // Train the agent on the sub-environment
-        trainAgentWithStoppingCriterion(node->maze, subQTable, node->rows, node->cols, node->startRow, node->startCol,
+        trainAgentWithStoppingCriterion(node->maze, node->qTable, node->rows, node->cols, node->startRow,
+                                        node->startCol,
                                         node->endRow, node->endCol, epsilon);
 
         // Copy the Q-table results to the leaf node
-        copyQTableToNode(node, subQTable);
+        copyQTableToNode(node, node->qTable);
 
         // Propagate the Q-table results from the leaf to the root
         propagateQTableUpwards(node);
@@ -1182,8 +1225,7 @@ unordered_map<pair<int, int>, vector<pair<int, int> >, HashPair> computeAllShort
 
             if (found) {
                 shortestPaths[{startX, startY}] = reconstructPath(cameFrom, startX, startY, goal.first, goal.second);
-            }
-            else {
+            } else {
                 shortestPaths[{startX, startY}] = {};
             }
         }
@@ -1192,7 +1234,9 @@ unordered_map<pair<int, int>, vector<pair<int, int> >, HashPair> computeAllShort
 }
 
 //*************************************************************************/
-tuple<double, double, double> testAgentAStar(const vector<vector<int>> &maze, const int rows, const int cols, const unordered_map<pair<int, int>, vector<pair<int, int>>, HashPair> &shortestPaths, const int nrTestEpisodes) {
+tuple<double, double, double> testAgentAStar(const vector<vector<int> > &maze, const int rows, const int cols,
+                                             const unordered_map<pair<int, int>, vector<pair<int, int> >, HashPair> &
+                                             shortestPaths, const int nrTestEpisodes) {
     // Statistics
     double totalPlanningTime = 0.0;
     int successfulPaths = 0;
@@ -1204,7 +1248,7 @@ tuple<double, double, double> testAgentAStar(const vector<vector<int>> &maze, co
 
         // Measure the planning time
         auto start = chrono::high_resolution_clock::now();
-        const vector<pair<int, int>>& path = shortestPaths.at({startX, startY});
+        const vector<pair<int, int> > &path = shortestPaths.at({startX, startY});
         const bool success = !path.empty();
 
         auto end = chrono::high_resolution_clock::now();
@@ -1226,29 +1270,32 @@ tuple<double, double, double> testAgentAStar(const vector<vector<int>> &maze, co
 }
 
 //*************************************************************************/
-void testAStarPerformance(MazeNode* root, const int numSteps, const int nrTestEpisodes) {
+void testAStarPerformance(MazeNode *root, const int numSteps, const int nrTestEpisodes) {
     // Measure A* efficiency (before environment change)
     srand(time(NULL));
     auto start = chrono::high_resolution_clock::now();
-    const unordered_map<pair<int, int>, vector<pair<int, int>>, HashPair> shortestPaths = computeAllShortestPaths(root->maze);
+    const unordered_map<pair<int, int>, vector<pair<int, int> >, HashPair> shortestPaths =
+            computeAllShortestPaths(root->maze);
     auto end = chrono::high_resolution_clock::now();
     const double staticTime = chrono::duration<double>(end - start).count();
 
     // Simulate environment changes
     srand(42);
-    vector<pair<int, int>> changedPositions;
+    vector<pair<int, int> > changedPositions;
     simulateEnvironmentChanges(root, numSteps, changedPositions);
 
     // Measure A* efficiency (after environment change)
     srand(time(NULL));
     start = chrono::high_resolution_clock::now();
-    const unordered_map<pair<int, int>, vector<pair<int, int>>, HashPair> newShortestPaths = computeAllShortestPaths(root->maze);
+    const unordered_map<pair<int, int>, vector<pair<int, int> >, HashPair> newShortestPaths =
+            computeAllShortestPaths(root->maze);
     end = chrono::high_resolution_clock::now();
     const double dynamicTime = chrono::duration<double>(end - start).count();
 
     // Test the agent using A* algorithm
     srand(time(NULL));
-    auto [planningTime, successRate, avgPath] = testAgentAStar(root->maze, root->rows, root->cols, newShortestPaths, nrTestEpisodes);
+    auto [planningTime, successRate, avgPath] = testAgentAStar(root->maze, root->rows, root->cols, newShortestPaths,
+                                                               nrTestEpisodes);
 
     cout << "\n--- A* Algorithm Results ---\n";
     cout << "Static A* Time          : " << staticTime << "s\n";
@@ -1397,7 +1444,8 @@ void testMasMat(MazeNode *root, const int numSteps, const int nrTestEpisodes) {
 
     // Test the agent's performance after applying MasMat
     srand(time(NULL));
-    auto [masMatPlanningTime, masMatSuccessRate, masMatAvgPath] = testAgent(root->maze, root->qTable, root->rows, root->cols, nrTestEpisodes);
+    auto [masMatPlanningTime, masMatSuccessRate, masMatAvgPath] = testAgent(
+        root->maze, root->qTable, root->rows, root->cols, nrTestEpisodes);
 
     cout << "\n--- MasMat Results ---\n";
     cout << "Static Training Time     : " << masMatStaticTime << "s\n";
@@ -1427,17 +1475,18 @@ void trainLeafNodesInParallel(const vector<MazeNode *> &leafNodes, double epsilo
 
     for (MazeNode *leaf: leafNodes) {
         threads.emplace_back([leaf, epsilon]() {
-            vector<vector<vector<double> > > qTable(
-                leaf->rows, vector<vector<double> >(leaf->cols, vector<double>(ACTION_COUNT, 0)));
+            // vector<vector<vector<double> > > qTable(
+            //     leaf->rows, vector<vector<double> >(leaf->cols, vector<double>(ACTION_COUNT, 0)));
             cout << "Training agent in leaf node: Start(" << leaf->startRow << ", " << leaf->startCol << "), "
                     << "End(" << leaf->endRow << ", " << leaf->endCol << ")\n";
 
             // Train the agent in this leaf node's subenvironment
-            trainAgentWithStoppingCriterion(leaf->maze, qTable, leaf->rows, leaf->cols, leaf->startRow, leaf->startCol,
+            trainAgentWithStoppingCriterion(leaf->maze, leaf->qTable, leaf->rows, leaf->cols, leaf->startRow,
+                                            leaf->startCol,
                                             leaf->endRow, leaf->endCol, epsilon);
 
             // Copy the Q-table results to the leaf node
-            copyQTableToNode(leaf, qTable);
+            copyQTableToNode(leaf, leaf->qTable);
 
             // Propagate the Q-table results upwards
             propagateQTableUpwards(leaf);
@@ -1456,19 +1505,20 @@ void trainLeafNodesInParallel(const vector<MazeNode *> &leafNodes, double epsilo
 void trainLeafNodesSequentially(const vector<MazeNode *> &leafNodes, const double epsilon) {
     for (MazeNode *leaf: leafNodes) {
         // Create a fresh Q-table for this leaf node
-        vector<vector<vector<double> > > qTable(
-            leaf->rows, vector<vector<double> >(leaf->cols, vector<double>(ACTION_COUNT, 0)));
+        // vector<vector<vector<double> > > qTable(
+        //     leaf->rows, vector<vector<double> >(leaf->cols, vector<double>(ACTION_COUNT, 0)));
 
         // Logging the start of training
         cout << "Training agent in leaf node: Start(" << leaf->startRow << ", " << leaf->startCol << "), "
                 << "End(" << leaf->endRow << ", " << leaf->endCol << ")\n";
 
         // Train the agent in this leaf node's subenvironment
-        trainAgentWithStoppingCriterion(leaf->maze, qTable, leaf->rows, leaf->cols, leaf->startRow, leaf->startCol,
+        trainAgentWithStoppingCriterion(leaf->maze, leaf->qTable, leaf->rows, leaf->cols, leaf->startRow,
+                                        leaf->startCol,
                                         leaf->endRow, leaf->endCol, epsilon);
 
         // Copy the Q-table results to the leaf node
-        copyQTableToNode(leaf, qTable);
+        copyQTableToNode(leaf, leaf->qTable);
 
         // Propagate the Q-table results upwards
         propagateQTableUpwards(leaf);
@@ -1476,47 +1526,50 @@ void trainLeafNodesSequentially(const vector<MazeNode *> &leafNodes, const doubl
 }
 
 //*************************************************************************/
-void applyLocalPathPlanning(MazeNode *root, const vector<pair<int, int> > &changedPositions, const double epsilon) {
-    // Environment is static
-    if (changedPositions.empty()) {
-        vector<MazeNode *> leafNodes;
-        collectLeafNodes(root, leafNodes);
-        cout << "\nEnvironment is static. Performing global local path planning for all leaf nodes.\n";
-        // trainLeafNodesInParallel(leafNodes, epsilon); // Train all leaf nodes in parallel
-        trainLeafNodesSequentially(leafNodes, epsilon); // Train all leaf nodes sequentially
+void trainLeafNodesInBatches(const vector<MazeNode *> &leafNodes, const double epsilon, const int batchSize) {
+    const int totalNodes = leafNodes.size();
+    for (int i = 0; i < totalNodes; i += batchSize) {
+        int end = min(i + batchSize, totalNodes);
+        vector<MazeNode *> newLeaves(leafNodes.begin() + i, leafNodes.begin() + end);
+        trainLeafNodesInParallel(newLeaves, epsilon);
+    }
+}
 
-        // Environment changed
+//*************************************************************************/
+void applyLocalPathPlanning(MazeNode *root, const vector<pair<int, int> > &changedPositions) {
+    vector<MazeNode *> leafNodes;
+    collectLeafNodes(root, leafNodes);
+
+    if (changedPositions.empty()) {
+        cout << "\nEnvironment is static. Performing global path planning selectively.\n";
+        // Train in batches
+        trainLeafNodesInBatches(leafNodes, 1.0, leafNodes.size());
     } else {
-        // Collect all affected leaf nodes
         unordered_set<MazeNode *> uniqueAffectedNodes;
         for (const auto &pos: changedPositions) {
             MazeNode *affectedNode = root->findSubEnvironment(pos.first, pos.second);
             if (affectedNode && affectedNode->children.empty()) {
-                uniqueAffectedNodes.insert(affectedNode); // Ensure no duplicates
+                uniqueAffectedNodes.insert(affectedNode);
             }
         }
 
-        // Convert the unordered_set to a vector
-        const vector<MazeNode *> affectedLeafNodes(uniqueAffectedNodes.begin(), uniqueAffectedNodes.end());
+        vector<MazeNode *> affectedLeafNodes(uniqueAffectedNodes.begin(), uniqueAffectedNodes.end());
 
-        // Apply local path planning to affected leaf nodes
         if (!affectedLeafNodes.empty()) {
-            cout << "\nEnvironment changed. Performing local path planning for affected leaf nodes.\n";
-            trainLeafNodesInParallel(affectedLeafNodes, epsilon); // Train affected leaf nodes in parallel
+            cout << "\nEnvironment changed. Training affected leaf nodes.\n";
+            trainLeafNodesInBatches(affectedLeafNodes, 0.5, affectedLeafNodes.size());
         } else {
-            cout << "\nNo affected leaf nodes detected for local path planning.\n";
+            cout << "\nNo affected leaf nodes detected.\n";
         }
     }
 }
 
 //*************************************************************************/
 void testLocalPathPlanning(MazeNode *root, const int numSteps, const int nrTestEpisodes) {
-    constexpr double epsilon = 1.0; // Exploration parameter for Q-learning
-
     // Measure Local Path Planning efficiency (before environment change)
     srand(time(NULL));
     auto start = chrono::high_resolution_clock::now();
-    applyLocalPathPlanning(root, {}, epsilon);
+    applyLocalPathPlanning(root, {});
     auto end = chrono::high_resolution_clock::now();
     const double localStaticTime = chrono::duration<double>(end - start).count();
 
@@ -1528,13 +1581,14 @@ void testLocalPathPlanning(MazeNode *root, const int numSteps, const int nrTestE
     // Measure Local Path Planning efficiency (after environment change)
     srand(time(NULL));
     start = chrono::high_resolution_clock::now();
-    applyLocalPathPlanning(root, changedPositions, epsilon);
+    applyLocalPathPlanning(root, changedPositions);
     end = chrono::high_resolution_clock::now();
     const double localDynamicTime = chrono::duration<double>(end - start).count();
 
     // Test the agent's performance after applying local path planning
     srand(time(NULL));
-    auto [localPlanningTime, localSuccessRate, localAvgPath] = testAgent(root->maze, root->qTable, root->rows, root->cols, nrTestEpisodes);
+    auto [localPlanningTime, localSuccessRate, localAvgPath] = testAgent(
+        root->maze, root->qTable, root->rows, root->cols, nrTestEpisodes);
 
     cout << "\n--- Local Path Planning Results ---\n";
     cout << "Static Training Time     : " << localStaticTime << "s\n";
@@ -1853,7 +1907,8 @@ void testVDNTraining(MazeNode *root, const int numChanges, const int testEpisode
 
     // Evaluate Performance with Path Planning
     srand(time(NULL));
-    auto [vdnPlanningTime, vdnSuccessRate, vdnAvgPath] = testAgent(root->maze, root->qTable, root->rows, root->cols, testEpisodes);
+    auto [vdnPlanningTime, vdnSuccessRate, vdnAvgPath] = testAgent(root->maze, root->qTable, root->rows, root->cols,
+                                                                   testEpisodes);
 
     // Output Results
     cout << "\n--- VDN Training Results ---\n";
@@ -1873,14 +1928,14 @@ void runExperiment(const int rows, const int cols, const double freeSpaceProb, c
 
     // Create the root nodes
     MazeNode *root1 = createSubEnvironments(maze, rows, cols);
-    MazeNode *root2 = createSubEnvironments(maze, rows, cols);
+    // MazeNode *root2 = createSubEnvironments(maze, rows, cols);
     MazeNode *root3 = createSubEnvironments(maze, rows, cols);
-    MazeNode *root4 = createSubEnvironments(maze, rows, cols);
+    // MazeNode *root4 = createSubEnvironments(maze, rows, cols);
 
     // Output Maze size
     cout << "\nMaze Size: " << rows << "x" << cols << "\n";
 
-    constexpr int nrTestEpisodes = 50'000; // Number of test episodes
+    constexpr int nrTestEpisodes = 100'000; // Number of test episodes
 
     // Measure A* efficiency and agent performance
     testAStarPerformance(root1, numChanges, nrTestEpisodes);
@@ -1896,9 +1951,9 @@ void runExperiment(const int rows, const int cols, const double freeSpaceProb, c
 
     // Deallocate memory for the root nodes
     delete root1;
-    delete root2;
+    // delete root2;
     delete root3;
-    delete root4;
+    // delete root4;
 }
 
 int main() {
@@ -1923,20 +1978,45 @@ int main() {
     // runExperiment(80, 80, 0.6, 0.38, 0.02, 1);
     // runExperiment(80, 80, 0.6, 0.39, 0.01, 10);
 
-    // runExperiment(100, 100, 0.8, 0.18, 0.02, 1);
-    // runExperiment(100, 100, 0.8, 0.19, 0.01, 15);
-    // runExperiment(100, 100, 0.6, 0.38, 0.02, 1);
-    // runExperiment(100, 100, 0.6, 0.39, 0.01, 15);
+    // runExperiment(100, 100, 0.8, 0.19, 0.01, 1);
+    // runExperiment(100, 100, 0.8, 0.19, 0.01, 10);
+    // runExperiment(100, 100, 0.8, 0.19, 0.01, 20);
 
-    // runExperiment(150, 150, 0.8, 0.18, 0.02, 1);
-    // runExperiment(150, 150, 0.8, 0.19, 0.01, 20);
-    // runExperiment(150, 150, 0.6, 0.38, 0.02, 1);
-    // runExperiment(150, 150, 0.6, 0.39, 0.01, 20);
+    // runExperiment(100, 100, 0.6, 0.39, 0.01, 1);
+    // runExperiment(100, 100, 0.6, 0.39, 0.01, 10);
+    // runExperiment(100, 100, 0.6, 0.39, 0.01, 20);
 
-    runExperiment(200, 200, 0.8, 0.18, 0.02, 1);
-    runExperiment(200, 200, 0.8, 0.19, 0.01, 30);
-    runExperiment(200, 200, 0.6, 0.38, 0.02, 1);
-    runExperiment(200, 200, 0.6, 0.39, 0.01, 30);
+    runExperiment(200, 200, 0.8, 0.19, 0.01, 1);
+    runExperiment(200, 200, 0.8, 0.19, 0.01, 10);
+    runExperiment(200, 200, 0.8, 0.19, 0.01, 20);
+
+    runExperiment(200, 200, 0.6, 0.39, 0.01, 1);
+    runExperiment(200, 200, 0.6, 0.39, 0.01, 10);
+    runExperiment(200, 200, 0.6, 0.39, 0.01, 20);
+
+    // runExperiment(400, 400, 0.8, 0.19, 0.01, 1);
+    // runExperiment(400, 400, 0.8, 0.19, 0.01, 10);
+    // runExperiment(400, 400, 0.8, 0.19, 0.01, 20);
+
+    // runExperiment(400, 400, 0.6, 0.39, 0.01, 1);
+    // runExperiment(400, 400, 0.6, 0.39, 0.01, 10);
+    // runExperiment(400, 400, 0.6, 0.39, 0.01, 20);
+
+    // runExperiment(800, 800, 0.8, 0.19, 0.01, 1);
+    // runExperiment(800, 800, 0.8, 0.19, 0.01, 10);
+    // runExperiment(800, 800, 0.8, 0.19, 0.01, 20);
+
+    // runExperiment(800, 800, 0.6, 0.39, 0.01, 1);
+    // runExperiment(800, 800, 0.6, 0.39, 0.01, 10);
+    // runExperiment(800, 800, 0.6, 0.39, 0.01, 20);
+
+    // runExperiment(1000, 1000, 0.8, 0.19, 0.01, 1);
+    // runExperiment(1000, 1000, 0.8, 0.19, 0.01, 10);
+    // runExperiment(1000, 1000, 0.8, 0.19, 0.01, 20);
+
+    // runExperiment(1000, 1000, 0.6, 0.39, 0.01, 1);
+    // runExperiment(1000, 1000, 0.6, 0.39, 0.01, 10);
+    // runExperiment(1000, 1000, 0.6, 0.39, 0.01, 20);
 
     return 0;
 }
