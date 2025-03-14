@@ -8,8 +8,11 @@
 #include <chrono>
 #include <cmath>
 #include <cstdlib>
+#include <fstream>
+#include <functional>
 #include <iomanip>
 #include <iostream>
+#include <map>
 #include <queue>
 #include <random>
 #include <set>
@@ -1565,7 +1568,7 @@ void applyLocalPathPlanning(MazeNode *root, const vector<pair<int, int> > &chang
         // cout << "\nEnvironment is static. Performing global path planning selectively.\n";
         // Train in batches
         int nrLeafNodes = leafNodes.size();
-        trainLeafNodesInBatches(leafNodes, 1.0, min(nrLeafNodes, 70));
+        trainLeafNodesInBatches(leafNodes, 1.0, min(nrLeafNodes, 100));
     } else {
         unordered_set<MazeNode *> uniqueAffectedNodes;
         for (const auto &pos: changedPositions) {
@@ -1580,35 +1583,10 @@ void applyLocalPathPlanning(MazeNode *root, const vector<pair<int, int> > &chang
         if (!affectedLeafNodes.empty()) {
             // cout << "\nEnvironment changed. Training affected leaf nodes.\n";
             int nrLeafNodes = affectedLeafNodes.size();
-            trainLeafNodesInBatches(affectedLeafNodes, 0.5, min(nrLeafNodes, 70));
+            trainLeafNodesInBatches(affectedLeafNodes, 0.5, min(nrLeafNodes, 100));
         } else {
             // cout << "\nNo affected leaf nodes detected.\n";
         }
-    }
-}
-
-//*************************************************************************/
-void propagateAndTrainUpwards(MazeNode* node, const vector<vector<int>>& maze, bool isInitialTraining) {
-    if (!node || node->children.empty()) return; // No propagation for leaf nodes
-
-    // Propagate Q-tables from children to this node
-    for (MazeNode* child : node->children) {
-        propagateQTableUpwards(child);
-    }
-
-    // Train this node
-    int maxStepsPerEpisode = (node->endRow - node->startRow + 1) + (node->endCol - node->startCol + 1);
-    double initialEpsilon = 0.6; // Moderate exploration for parent nodes
-    trainAgentWithStoppingCriterion(maze, node->qTable, node->rows, node->cols,
-                                    node->startRow, node->startCol, node->endRow, node->endCol,
-                                    initialEpsilon, maxStepsPerEpisode);
-    // cout << (isInitialTraining ? "Parent node trained" : "Parent node retrained")
-    //      << ": Start(" << node->startRow << "," << node->startCol
-    //      << "), End(" << node->endRow << "," << node->endCol << ") with " << maxStepsPerEpisode << " steps\n";
-
-    // Recursively propagate and train upwards
-    if (node->parent) {
-        propagateAndTrainUpwards(node->parent, maze, isInitialTraining);
     }
 }
 
@@ -1620,29 +1598,67 @@ void trainHierarchy(MazeNode* node, const vector<vector<int>>& maze,
     // Determine if this is initial training (no changes) or dynamic retraining
     bool isInitialTraining = changedPositions.empty();
 
-    // Identify affected leaf nodes (all leaves for initial training, only affected for retraining)
+    // Step 1: Train leaf nodes
     vector<MazeNode*> leafNodesToTrain;
     if (isInitialTraining) {
         // Collect all leaf nodes in the hierarchy
         collectLeafNodes(node, leafNodesToTrain);
     } else {
         // Collect only affected leaf nodes
-        unordered_set<MazeNode *> uniqueAffectedNodes;
-        for (const auto &pos: changedPositions) {
-            MazeNode *affectedNode = node->findSubEnvironment(pos.first, pos.second);
+        unordered_set<MazeNode*> uniqueAffectedNodes;
+        for (const auto& pos : changedPositions) {
+            MazeNode* affectedNode = node->findSubEnvironment(pos.first, pos.second);
             if (affectedNode && affectedNode->children.empty()) {
                 uniqueAffectedNodes.insert(affectedNode);
             }
         }
-        leafNodesToTrain = vector<MazeNode *>(uniqueAffectedNodes.begin(), uniqueAffectedNodes.end());
+        leafNodesToTrain = vector<MazeNode*>(uniqueAffectedNodes.begin(), uniqueAffectedNodes.end());
     }
 
-    // Train or retrain the relevant leaf nodes
+    // Train the leaf nodes
     int nrLeafNodes = leafNodesToTrain.size();
-    trainLeafNodesInBatches(leafNodesToTrain, 1.0, min(nrLeafNodes, 70));
+    trainLeafNodesInBatches(leafNodesToTrain, 1.0, min(nrLeafNodes, 100));
 
-    // Propagate and train upwards level-by-level
-    propagateAndTrainUpwards(node, maze, isInitialTraining);
+    // Step 2: Train affected nodes upwards iteratively
+    unordered_set<MazeNode*> currentLevelNodes;
+    for (MazeNode* leaf : leafNodesToTrain) {
+        if (leaf->parent) {
+            currentLevelNodes.insert(leaf->parent);
+        }
+    }
+
+    // Iterate upwards until no more parents (reached root or no affected nodes)
+    while (!currentLevelNodes.empty()) {
+        unordered_set<MazeNode*> nextLevelNodes;
+
+        // Train current level
+        for (MazeNode* currNode : currentLevelNodes) {
+            // Propagate Q-tables from children
+            for (MazeNode* child : currNode->children) {
+                propagateQTableUpwards(child);
+            }
+
+            // Train this node
+            int maxStepsPerEpisode = (currNode->endRow - currNode->startRow + 1) +
+                                    (currNode->endCol - currNode->startCol + 1);
+            double initialEpsilon = 0.6;
+            trainAgentWithStoppingCriterion(maze, currNode->qTable, currNode->rows, currNode->cols,
+                                            currNode->startRow, currNode->startCol,
+                                            currNode->endRow, currNode->endCol,
+                                            initialEpsilon, maxStepsPerEpisode);
+            // cout << (isInitialTraining ? "Trained" : "Retrained") << " node: Start("
+            //      << currNode->startRow << "," << currNode->startCol << "), End("
+            //      << currNode->endRow << "," << currNode->endCol << ")\n";
+
+            // Add parent to next level if it exists
+            if (currNode->parent) {
+                nextLevelNodes.insert(currNode->parent);
+            }
+        }
+
+        // Move to next level
+        currentLevelNodes = move(nextLevelNodes);
+    }
 }
 
 //*************************************************************************/
@@ -2037,116 +2053,210 @@ void testVDNTraining(MazeNode *root, const int numChanges, const int testEpisode
 //*************************************************************************/
 void runExperiment(const int rows, const int cols, const double freeSpaceProb, const double obstacleProb,
                    const double chargingStationProb, const int numChanges) {
-    // Create and initialize the maze
-    auto maze = vector<vector<int> >(rows, vector<int>(cols, 0));
+    // Create and initialize the maze once
+    auto maze = vector<vector<int>>(rows, vector<int>(cols, 0));
     createMaze(maze, rows, cols, freeSpaceProb, obstacleProb, chargingStationProb);
-
-    // Create the root nodes
-    MazeNode *root1 = createSubEnvironments(maze, rows, cols);
-    // MazeNode *root2 = createSubEnvironments(maze, rows, cols);
-    MazeNode *root3 = createSubEnvironments(maze, rows, cols);
-    MazeNode *root4 = createSubEnvironments(maze, rows, cols);
-    // MazeNode *root5 = createSubEnvironments(maze, rows, cols);
 
     // Output Maze size
     cout << "\nMaze Size: " << rows << "x" << cols << "\n";
 
     constexpr int nrTestEpisodes = 100'000; // Number of test episodes
 
-    // Measure A* efficiency and agent performance
-    testAStarPerformance(root1, numChanges, nrTestEpisodes);
-    delete root1;
+    // List of test functions to run
+    vector<function<void(MazeNode*, int, int)>> tests = {
+        testAStarPerformance,
+        // testMasMat,
+        testLocalPathPlanning,
+        testHierarchicalPathPlanning,
+        // testVDNTraining
+    };
 
-    // Measure planning time, path effectiveness, and compare with optimal paths
-    // testMasMat(root2, numChanges, nrTestEpisodes);
-    // delete root2;
+    // Run each test sequentially
+    for (const auto& test : tests) {
+        // Create a new root for this test
+        MazeNode* root = createSubEnvironments(maze, rows, cols);
 
-    // Measure planning time, path effectiveness, and compare with optimal paths
-    testLocalPathPlanning(root3, numChanges, nrTestEpisodes);
-    delete root3;
+        // Run the test
+        test(root, numChanges, nrTestEpisodes);
 
-    // Measure planning time, path effectiveness, and compare with optimal paths
-    testHierarchicalPathPlanning(root4, numChanges, nrTestEpisodes);
-    delete root4;
+        // Clean up the root
+        delete root;
+    }
+}
 
-    // Measure planning time, path effectiveness, and compare with optimal paths
-    // testVDNTraining(root5, numChanges, startPositions);
-    // delete root5;
+// Struct to hold metrics
+struct Metrics {
+    double initialTime;    // Initial training/planning time (s)
+    double adaptTime;      // Adaptation time after changes (s)
+    double successRate;    // % of successful episodes
+    double avgPathLength;  // Average path length
+};
+
+// Function to run the full experiment
+void runFullExperiment() {
+    // Maze sizes
+    vector<int> sizes = {10, 20, 50, 100, 200, 300};
+
+    // Difficulties: {freeSpaceProb, obstacleProb, chargingStationProb}
+    vector<tuple<double, double, double>> difficulties = {
+        {0.8, 0.19, 0.01},  // Easy
+        {0.6, 0.39, 0.01},  // Medium
+        {0.6, 0.395, 0.005} // Hard
+    };
+
+    // Change levels per size
+    map<int, vector<int>> changeLevels = {
+        {10, {1, 5}},
+        {20, {1, 5}},
+        {50, {1, 5, 10, 20}},
+        {100, {1, 5, 10, 20}},
+        {200, {1, 5, 10, 20, 30, 50}},
+        {300, {1, 5, 10, 20, 30, 50}}
+    };
+
+    // Test approaches
+    vector<pair<string, function<void(MazeNode*, int, int)>>> approaches = {
+        {"A*", testAStarPerformance},
+        {"Local", testLocalPathPlanning},
+        {"Hierarchy", testHierarchicalPathPlanning}
+    };
+
+    // Number of test episodes
+    constexpr int nrTestEpisodes = 10'000;
+
+    // Store results
+    map<string, vector<vector<Metrics>>> results; // [approach][size][change]
+    for (const auto& approach : approaches) {
+        results[approach.first].resize(sizes.size());
+    }
+
+    // Fixed seed for reproducibility
+    srand(42);
+
+    // Iterate over sizes
+    for (int s = 0; s < sizes.size(); ++s) {
+        int size = sizes[s];
+        cout << "\nTesting maze size: " << size << "x" << size;
+
+        // Iterate over difficulties
+        for (int d = 0; d < difficulties.size(); ++d) {
+            auto [freeProb, obstProb, chargeProb] = difficulties[d];
+            string diffName = (d == 0 ? "Easy" : d == 1 ? "Medium" : "Hard");
+            cout << "\n\nDifficulty: " << diffName;
+
+            // Create initial maze
+            auto maze = vector<vector<int>>(size, vector<int>(size, 0));
+            createMaze(maze, size, size, freeProb, obstProb, chargeProb);
+
+            // Predefine change sets
+            vector<vector<pair<int, int>>> changeSets(changeLevels[size].size());
+            MazeNode* tempRoot = createSubEnvironments(maze, size, size);
+            for (int c = 0; c < changeLevels[size].size(); ++c) {
+                simulateEnvironmentChanges(tempRoot, changeLevels[size][c], changeSets[c]);
+            }
+            delete tempRoot;
+
+            // Test each approach
+            for (const auto& [name, testFunc] : approaches) {
+                cout << "\nTesting " << name;
+
+                // Initial test
+                MazeNode* root = createSubEnvironments(maze, size, size);
+                Metrics initialMetrics;
+
+                if (name == "A*") {
+                    auto start = chrono::high_resolution_clock::now();
+                    auto shortestPaths = computeAllShortestPaths(root->maze);
+                    auto end = chrono::high_resolution_clock::now();
+                    auto [planTime, successRate, avgPath] = testAgentAStar(root->maze, size, size, shortestPaths, nrTestEpisodes);
+                    initialMetrics = {
+                        chrono::duration<double>(end - start).count(),
+                        0.0,
+                        successRate,
+                        avgPath
+                    };
+                } else {
+                    auto start = chrono::high_resolution_clock::now();
+                    if (name == "Local") applyLocalPathPlanning(root, {});
+                    else trainHierarchy(root, root->maze);
+                    auto end = chrono::high_resolution_clock::now();
+                    auto [_, successRate, avgPath] = testAgent(root->maze, root->qTable, size, size, nrTestEpisodes);
+                    initialMetrics = {
+                        chrono::duration<double>(end - start).count(),
+                        0.0,
+                        successRate,
+                        avgPath
+                    };
+                }
+                results[name][s].push_back(initialMetrics);
+
+                // Dynamic changes
+                for (int c = 0; c < changeLevels[size].size(); ++c) {
+                    int numChanges = changeLevels[size][c];
+                    vector<pair<int, int>> changes = changeSets[c];
+
+                    // Apply changes
+                    root->maze = maze; // Reset to initial state
+                    for (int i = 0; i < changes.size(); i += 2) {
+                        root->maze[changes[i].first][changes[i].second] = FREE_SPACE;
+                        root->maze[changes[i+1].first][changes[i+1].second] = OBSTACLE;
+                    }
+                    propagateMazeDownwards(root);
+
+                    // Test adaptation
+                    Metrics adaptMetrics;
+                    if (name == "A*") {
+                        auto start = chrono::high_resolution_clock::now();
+                        auto newShortestPaths = computeAllShortestPaths(root->maze);
+                        auto end = chrono::high_resolution_clock::now();
+                        auto [planTime, successRate, avgPath] = testAgentAStar(root->maze, size, size, newShortestPaths, nrTestEpisodes);
+                        adaptMetrics = {
+                            initialMetrics.initialTime,
+                            chrono::duration<double>(end - start).count(),
+                            successRate,
+                            avgPath
+                        };
+                    } else {
+                        auto start = chrono::high_resolution_clock::now();
+                        if (name == "Local") applyLocalPathPlanning(root, changes);
+                        else trainHierarchy(root, root->maze, changes);
+                        auto end = chrono::high_resolution_clock::now();
+                        auto [_, successRate, avgPath] = testAgent(root->maze, root->qTable, size, size, nrTestEpisodes);
+                        adaptMetrics = {
+                            initialMetrics.initialTime,
+                            chrono::duration<double>(end - start).count(),
+                            successRate,
+                            avgPath
+                        };
+                    }
+                    results[name][s].push_back(adaptMetrics);
+                }
+                delete root;
+            }
+        }
+    }
+
+    // Save results to file for plotting
+    ofstream out("results.csv");
+    out << "Approach,Size,Difficulty,Changes,InitialTime,AdaptTime,SuccessRate,AvgPathLength\n";
+    for (int s = 0; s < sizes.size(); ++s) {
+        int size = sizes[s];
+        for (int d = 0; d < difficulties.size(); ++d) {
+            string diffName = (d == 0 ? "Easy" : d == 1 ? "Medium" : "Hard");
+            for (const auto& [name, _] : approaches) {
+                for (int c = 0; c <= changeLevels[size].size(); ++c) {
+                    int changes = (c == 0 ? 0 : changeLevels[size][c-1]);
+                    const auto& m = results[name][s][c];
+                    out << name << "," << size << "," << diffName << "," << changes << ","
+                        << m.initialTime << "," << m.adaptTime << "," << m.successRate << "," << m.avgPathLength << "\n";
+                }
+            }
+        }
+    }
+    out.close();
 }
 
 int main() {
-    // Run experiments with different maze sizes and obstacle densities
-    // runExperiment(10, 10, 0.8, 0.19, 0.01, 1);
-    // runExperiment(10, 10, 0.8, 0.19, 0.01, 5);
-    // runExperiment(10, 10, 0.8, 0.19, 0.01, 10);
-
-    // runExperiment(10, 10, 0.6, 0.39, 0.01, 1);
-    // runExperiment(10, 10, 0.6, 0.39, 0.01, 5);
-    // runExperiment(10, 10, 0.6, 0.39, 0.01, 10);
-
-    // runExperiment(20, 20, 0.8, 0.19, 0.01, 1);
-    // runExperiment(20, 20, 0.8, 0.19, 0.01, 5);
-    // runExperiment(20, 20, 0.8, 0.19, 0.01, 10);
-
-    // runExperiment(20, 20, 0.6, 0.39, 0.01, 1);
-    // runExperiment(20, 20, 0.6, 0.39, 0.01, 5);
-    // runExperiment(20, 20, 0.6, 0.39, 0.01, 10);
-
-    // runExperiment(50, 50, 0.8, 0.19, 0.01, 1);
-    // runExperiment(50, 50, 0.8, 0.19, 0.01, 10);
-    // runExperiment(50, 50, 0.8, 0.19, 0.01, 20);
-
-    // runExperiment(50, 50, 0.6, 0.39, 0.01, 1);
-    // runExperiment(50, 50, 0.6, 0.39, 0.01, 10);
-    // runExperiment(50, 50, 0.6, 0.39, 0.01, 20);
-
-    // runExperiment(80, 80, 0.8, 0.19, 0.01, 1);
-    // runExperiment(80, 80, 0.8, 0.19, 0.01, 10);
-    // runExperiment(80, 80, 0.8, 0.19, 0.01, 20);
-
-    // runExperiment(80, 80, 0.6, 0.39, 0.01, 1);
-    // runExperiment(80, 80, 0.6, 0.39, 0.01, 10);
-    // runExperiment(80, 80, 0.6, 0.39, 0.01, 20);
-
-    // runExperiment(100, 100, 0.8, 0.19, 0.01, 1);
-    // runExperiment(100, 100, 0.8, 0.19, 0.01, 10);
-    // runExperiment(100, 100, 0.8, 0.19, 0.01, 20);
-
-    // runExperiment(100, 100, 0.6, 0.39, 0.01, 1);
-    // runExperiment(100, 100, 0.6, 0.39, 0.01, 10);
-    // runExperiment(100, 100, 0.6, 0.39, 0.01, 20);
-
-    // runExperiment(200, 200, 0.8, 0.19, 0.01, 1);
-    // runExperiment(200, 200, 0.8, 0.19, 0.01, 10);
-    // runExperiment(200, 200, 0.8, 0.19, 0.01, 20);
-
-    // runExperiment(200, 200, 0.6, 0.39, 0.01, 1);
-    // runExperiment(200, 200, 0.6, 0.39, 0.01, 10);
-    // runExperiment(200, 200, 0.6, 0.39, 0.01, 20);
-
-    runExperiment(400, 400, 0.8, 0.19, 0.01, 1);
-    runExperiment(400, 400, 0.8, 0.19, 0.01, 10);
-    runExperiment(400, 400, 0.8, 0.19, 0.01, 20);
-
-    runExperiment(400, 400, 0.6, 0.39, 0.01, 1);
-    runExperiment(400, 400, 0.6, 0.39, 0.01, 10);
-    runExperiment(400, 400, 0.6, 0.39, 0.01, 20);
-
-    // runExperiment(800, 800, 0.8, 0.19, 0.01, 1);
-    // runExperiment(800, 800, 0.8, 0.19, 0.01, 10);
-    // runExperiment(800, 800, 0.8, 0.19, 0.01, 20);
-
-    // runExperiment(800, 800, 0.6, 0.39, 0.01, 1);
-    // runExperiment(800, 800, 0.6, 0.39, 0.01, 10);
-    // runExperiment(800, 800, 0.6, 0.39, 0.01, 20);
-
-    // runExperiment(1000, 1000, 0.8, 0.19, 0.01, 1);
-    // runExperiment(1000, 1000, 0.8, 0.19, 0.01, 10);
-    // runExperiment(1000, 1000, 0.8, 0.19, 0.01, 20);
-
-    // runExperiment(1000, 1000, 0.6, 0.39, 0.01, 1);
-    // runExperiment(1000, 1000, 0.6, 0.39, 0.01, 10);
-    // runExperiment(1000, 1000, 0.6, 0.39, 0.01, 20);
-
+    runFullExperiment();
     return 0;
 }
