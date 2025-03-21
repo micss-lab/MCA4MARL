@@ -3,12 +3,12 @@ import matplotlib.pyplot as plt
 import os
 
 # Create 'plots' directory if it doesn't exist
-plots_dir = "plots"
+plots_dir = "plots_5x5"
 if not os.path.exists(plots_dir):
     os.makedirs(plots_dir)
 
 # Load data
-data = pd.read_csv("results.csv")
+data = pd.read_csv("results_5x5.csv")
 
 # Define difficulties and sizes
 difficulties = ['Easy', 'Medium', 'Hard']
@@ -80,7 +80,7 @@ for difficulty in difficulties:
     plt.close()
 
 # 4. Scatter Plots: Success Rate vs. Adaptation Time for Each Number of Changes
-change_levels = sorted(data[data['Changes'] > 0]['Changes'].unique())  # e.g., [1, 5, 10, 20, 30, 50]
+change_levels = sorted(data[data['Changes'] > 0]['Changes'].unique())  # e.g., [1, 5, 10, 20, 50]
 
 for changes in change_levels:
     plt.figure(figsize=(12, 6))
