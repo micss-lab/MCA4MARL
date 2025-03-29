@@ -799,62 +799,166 @@ void trainAgentWithStoppingCriterion(const vector<vector<int> > &maze, vector<ve
     // }
 }
 
-//*************************************************************************/
-tuple<double, double, double> testAgent(const vector<vector<int> > &maze,
-                                        const vector<vector<vector<double> > > &qTable, const int rows, const int cols,
-                                        const int nrTestEpisodes) {
+/**************************************************************************/
+vector<int> selectTopTwoActions(const vector<vector<vector<double>>>& qTable, int rows, int cols, int x, int y) {
+    const vector<pair<int, int>> moves = {{-1, 0}, {-1, 1}, {0, 1}, {1, 1}, {1, 0}, {1, -1}, {0, -1}, {-1, -1}};
+    vector<pair<double, int>> qValues;
+
+    // Collect valid actions with Q-values
+    for (int i = 0; i < ACTION_COUNT; ++i) {
+        int newX = x + moves[i].first;
+        int newY = y + moves[i].second;
+        if (newX >= 0 && newX < rows && newY >= 0 && newY < cols) {
+            qValues.push_back({qTable[x][y][i], i});
+        }
+    }
+
+    if (qValues.empty()) {
+        cerr << "Error: No valid actions at (" << x << ", " << y << ")\n";
+        return {};
+    }
+
+    // Sort by Q-value descending
+    sort(qValues.begin(), qValues.end(), greater<pair<double, int>>());
+
+    // Return top two (or one if only one valid)
+    vector<int> actions;
+    actions.push_back(qValues[0].second);
+    if (qValues.size() > 1) actions.push_back(qValues[1].second);
+    return actions;
+}
+
+/**************************************************************************/
+struct PathState {
+    int x, y, steps;
+    vector<pair<int, int>> path;
+};
+
+/**************************************************************************/
+tuple<bool, int, vector<pair<int, int>>> findValidPath(const vector<vector<int>>& maze,
+                                                       const vector<vector<vector<double>>>& qTable,
+                                                       int rows, int cols, int startX, int startY, int maxSteps) {
+    const vector<pair<int, int>> moves = {{-1, 0}, {-1, 1}, {0, 1}, {1, 1}, {1, 0}, {1, -1}, {0, -1}, {-1, -1}};
+    queue<PathState> toExplore;
+    set<pair<int, int>> visited;
+    toExplore.push({startX, startY, 0, {{startX, startY}}});
+    visited.insert({startX, startY});
+
+    while (!toExplore.empty()) {
+        PathState current = toExplore.front();
+        toExplore.pop();
+
+        if (current.steps >= maxSteps) continue;
+        if (maze[current.x][current.y] == 2) { // Success
+            return {true, current.steps, current.path};
+        }
+
+        vector<int> actions = selectTopTwoActions(qTable, rows, cols, current.x, current.y);
+        for (int act : actions) {
+            int newX = current.x + moves[act].first;
+            int newY = current.y + moves[act].second;
+            if (newX >= 0 && newX < rows && newY >= 0 && newY < cols && maze[newX][newY] != 0 &&
+                visited.find({newX, newY}) == visited.end()) {
+                visited.insert({newX, newY});
+                vector<pair<int, int>> newPath = current.path;
+                newPath.push_back({newX, newY});
+                toExplore.push({newX, newY, current.steps + 1, newPath});
+            }
+        }
+    }
+    return {false, 0, {}}; // No valid path
+}
+
+tuple<double, double, double> testAgent(const vector<vector<int>>& maze,
+                                        const vector<vector<vector<double>>>& qTable,
+                                        const int rows, const int cols, const int nrTestEpisodes) {
     const int maxEpisodes = rows + cols;
 
-    // Keep track of statistics
     double totalPlanningTime = 0.0;
     int successfulPaths = 0;
     int totalSteps = 0;
 
-    // Test the agent over multiple episodes
     for (int test = 0; test < nrTestEpisodes; test++) {
         int x1, y1;
         tie(x1, y1) = selectFirstPlace(maze, 0, 0, rows - 1, cols - 1);
 
-        // Measure the planning time for this episode
         auto start = chrono::high_resolution_clock::now();
-        int steps = 0;
-        bool success = false;
 
-        // Start generating one episode
-        while (steps < maxEpisodes) {
-            int act = selectActionWithSoftBoundaries(qTable, rows, cols, x1, y1, 0.0);
-            int x2, y2;
-            double actionReward;
-            tie(x2, y2, act, actionReward) = performAction(maze, rows, cols, x1, y1, act);
-            steps++;
+        // Try finding a valid path with top-two actions
+        auto [success, steps, path] = findValidPath(maze, qTable, rows, cols, x1, y1, maxEpisodes);
 
-            // Check if the exit condition is met
-            if (checkExit(maze, x2, y2)) {
-                success = true;
-                break;
-            }
-            x1 = x2;
-            y1 = y2;
-        }
-
-        // Measure the planning time for this episode
         auto end = chrono::high_resolution_clock::now();
         totalPlanningTime += chrono::duration<double>(end - start).count();
 
-        // Update statistics
         if (success) {
             successfulPaths++;
             totalSteps += steps;
         }
     }
 
-    // Calculate the success rate, average path length, and average planning time
     double successRate = static_cast<double>(successfulPaths) / nrTestEpisodes;
     double avgPathLength = successfulPaths > 0 ? static_cast<double>(totalSteps) / successfulPaths : 0.0;
     double avgPlanningTime = totalPlanningTime / nrTestEpisodes;
 
-    return make_tuple(avgPlanningTime, successRate, avgPathLength);
+    return {avgPlanningTime, successRate, avgPathLength};
 }
+
+//*************************************************************************/
+// tuple<double, double, double> testAgent(const vector<vector<int> > &maze,
+//                                         const vector<vector<vector<double> > > &qTable, const int rows, const int cols,
+//                                         const int nrTestEpisodes) {
+//     const int maxEpisodes = rows + cols;
+//
+//     // Keep track of statistics
+//     double totalPlanningTime = 0.0;
+//     int successfulPaths = 0;
+//     int totalSteps = 0;
+//
+//     // Test the agent over multiple episodes
+//     for (int test = 0; test < nrTestEpisodes; test++) {
+//         int x1, y1;
+//         tie(x1, y1) = selectFirstPlace(maze, 0, 0, rows - 1, cols - 1);
+//
+//         // Measure the planning time for this episode
+//         auto start = chrono::high_resolution_clock::now();
+//         int steps = 0;
+//         bool success = false;
+//
+//         // Start generating one episode
+//         while (steps < maxEpisodes) {
+//             int act = selectActionWithSoftBoundaries(qTable, rows, cols, x1, y1, 0.0);
+//             int x2, y2;
+//             double actionReward;
+//             tie(x2, y2, act, actionReward) = performAction(maze, rows, cols, x1, y1, act);
+//             steps++;
+//
+//             // Check if the exit condition is met
+//             if (checkExit(maze, x2, y2)) {
+//                 success = true;
+//                 break;
+//             }
+//             x1 = x2;
+//             y1 = y2;
+//         }
+//
+//         // Measure the planning time for this episode
+//         auto end = chrono::high_resolution_clock::now();
+//         totalPlanningTime += chrono::duration<double>(end - start).count();
+//
+//         // Update statistics
+//         if (success) {
+//             successfulPaths++;
+//             totalSteps += steps;
+//         }
+//     }
+//
+//     // Calculate the success rate, average path length, and average planning time
+//     double successRate = static_cast<double>(successfulPaths) / nrTestEpisodes;
+//     double avgPathLength = successfulPaths > 0 ? static_cast<double>(totalSteps) / successfulPaths : 0.0;
+//     double avgPlanningTime = totalPlanningTime / nrTestEpisodes;
+//
+//     return make_tuple(avgPlanningTime, successRate, avgPathLength);
+// }
 
 //*************************************************************************/
 void splitMaze(MazeNode* node, const vector<vector<int>>& fullMaze, const int rows, const int cols,
@@ -2152,7 +2256,7 @@ void runFullExperiment() {
     }
 
     // Save results to file
-    ofstream out("results_20x20.csv");
+    ofstream out("results_20x20_new.csv");
     out << "Approach,Size,Difficulty,Changes,InitialTime,AdaptTime,SuccessRate,AvgPathLength\n";
     for (int s = 0; s < sizes.size(); ++s) {
         int size = sizes[s];

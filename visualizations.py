@@ -3,12 +3,12 @@ import matplotlib.pyplot as plt
 import os
 
 # Create 'plots' directory if it doesn't exist
-plots_dir = "plots_20x20"
+plots_dir = "plots_20x20_new"
 if not os.path.exists(plots_dir):
     os.makedirs(plots_dir)
 
 # Load data
-data = pd.read_csv("results_20x20.csv")
+data = pd.read_csv("results_20x20_new.csv")
 
 # Define difficulties and sizes
 difficulties = ['Easy', 'Medium', 'Hard']
