@@ -2102,40 +2102,6 @@ void testVDNTraining(MazeNode *root, const int numChanges, const int testEpisode
 }
 
 //*************************************************************************/
-// void runExperiment(const int rows, const int cols, const double freeSpaceProb, const double obstacleProb,
-//                    const double chargingStationProb, const int numChanges) {
-//     // Create and initialize the maze once
-//     auto maze = vector<vector<int> >(rows, vector<int>(cols, 0));
-//     createMaze(maze, rows, cols, freeSpaceProb, obstacleProb, chargingStationProb);
-//
-//     // Output Maze size
-//     cout << "\nMaze Size: " << rows << "x" << cols << "\n";
-//
-//     constexpr int nrTestEpisodes = 100'000; // Number of test episodes
-//
-//     // List of test functions to run
-//     vector<function<void(MazeNode *, int, int)> > tests = {
-//         testAStarPerformance,
-//         // testMasMat,
-//         testLocalPathPlanning,
-//         testHierarchicalPathPlanning,
-//         // testVDNTraining
-//     };
-//
-//     // Run each test sequentially
-//     for (const auto &test: tests) {
-//         // Create a new root for this test
-//         MazeNode *root = createSubEnvironments(maze, rows, cols);
-//
-//         // Run the test
-//         test(root, numChanges, nrTestEpisodes);
-//
-//         // Clean up the root
-//         delete root;
-//     }
-// }
-
-//*************************************************************************/
 struct Metrics {
     double initialTime;
     double adaptTime;
@@ -2292,7 +2258,7 @@ struct Metrics {
 // }
 
 void runFullExperiment() {
-    vector<int> sizes = {20, 50, 100, 200, 300, 400};
+    vector<int> sizes = {20, 50, 100, 200, 300};
     vector<tuple<double, double, double>> difficulties = {
         {0.8, 0.19, 0.01},
         {0.7, 0.29, 0.01},

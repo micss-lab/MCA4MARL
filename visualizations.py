@@ -13,7 +13,7 @@ detailed_data = pd.read_csv("results_incremental_detailed.csv")
 
 # Define difficulties and sizes
 difficulties = ["Easy", "Medium", "Hard"]
-sizes = [20, 50, 100, 200, 300, 400]
+sizes = [20, 50, 100, 200, 300]
 
 # 1. Line Plots: Adaptation Time vs. Maze Size for Each Difficulty
 for difficulty in difficulties:
