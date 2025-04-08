@@ -2292,7 +2292,7 @@ struct Metrics {
 // }
 
 void runFullExperiment() {
-    vector<int> sizes = {20, 50, 100, 200, 300};
+    vector<int> sizes = {20, 50, 100, 200, 300, 400};
     vector<tuple<double, double, double>> difficulties = {
         {0.8, 0.19, 0.01},
         {0.7, 0.29, 0.01},
@@ -2306,6 +2306,11 @@ void runFullExperiment() {
     };
     const int maxTimeSteps = 50;
 
+    // Detailed output file for per-step data
+    ofstream detailedOut("results_incremental_detailed.csv");
+    detailedOut << "Approach,Size,Difficulty,TimeStep,NumChanges,AdaptTime,SuccessRate,AvgPathLength\n";
+
+    // Map to store results
     map<string, vector<vector<Metrics>>> results;
     for (const auto& [name, f] : approaches) {
         results[name].resize(sizes.size());
@@ -2314,6 +2319,7 @@ void runFullExperiment() {
         }
     }
 
+    // Iterate over maze sizes and difficulties
     for (int s = 0; s < sizes.size(); ++s) {
         int size = sizes[s];
         cout << "\n\nTesting maze size: " << size << "x" << size;
@@ -2324,29 +2330,32 @@ void runFullExperiment() {
             string diffName = (d == 0 ? "Easy" : d == 1 ? "Medium" : "Hard");
             cout << "\n\nDifficulty: " << diffName;
 
-            // Precompute maze and changes
+            // Create the initial maze
             auto initialMaze = vector<vector<int>>(size, vector<int>(size, 0));
             createMaze(initialMaze, size, size, freeProb, obstProb, chargeProb);
-            vector<vector<pair<int, int>>> changeSequence(maxTimeSteps);
+            vector<pair<int, vector<pair<int, int>>>> changeSequence(maxTimeSteps); // Pair: numChanges, changes
             MazeNode* tempRoot = createSubEnvironments(initialMaze, size, size);
 
+            // Simulate change positions upfront
             for (int t = 0; t < maxTimeSteps; ++t) {
-                int r = rand() % 1000; // Finer granularity for probabilities
+                int r = rand() % 1000;
                 int numChanges;
-                if (r < 900) numChanges = 1;        // 90%
-                else if (r < 960) numChanges = 2;   // 6%
-                else if (r < 980) numChanges = 3;   // 2%
-                else if (r < 990) numChanges = 4;   // 1%
-                else if (r < 995) numChanges = 5;   // 0.5%
-                else if (r < 997) numChanges = 6;   // 0.25%
-                else if (r < 998) numChanges = 7;   // 0.125%
-                else if (r < 999) numChanges = 8;   // 0.125%
-                else if (r < 9995) numChanges = 9;  // 0.05%
-                else numChanges = 10;               // 0.05%
-                simulateEnvironmentChanges(tempRoot, numChanges, changeSequence[t]);
+                if (r < 900) numChanges = 1;
+                else if (r < 960) numChanges = 2;
+                else if (r < 980) numChanges = 3;
+                else if (r < 990) numChanges = 4;
+                else if (r < 995) numChanges = 5;
+                else if (r < 997) numChanges = 6;
+                else if (r < 998) numChanges = 7;
+                else if (r < 999) numChanges = 8;
+                else if (r < 9995) numChanges = 9;
+                else numChanges = 10;
+                changeSequence[t].first = numChanges;
+                simulateEnvironmentChanges(tempRoot, numChanges, changeSequence[t].second);
             }
             delete tempRoot;
 
+            // Iterate over approaches
             for (const auto& [name, testFunc] : approaches) {
                 cout << "\nTesting " << name;
 
@@ -2374,18 +2383,19 @@ void runFullExperiment() {
                 totalSuccessRate += successRate;
                 totalPathLength += avgPath;
                 stepsCompleted++;
+                detailedOut << name << "," << size << "," << diffName << ",0,0,"
+                            << 0.0 << "," << successRate << "," << avgPath << "\n";
 
-                // Apply precomputed changes over time
+                // Apply changes over time
                 vector<vector<int>> currentMaze = initialMaze;
                 for (int t = 0; t < maxTimeSteps; ++t) {
-                    const auto& changes = changeSequence[t];
+                    const auto& [numChanges, changes] = changeSequence[t];
                     for (int i = 0; i < changes.size(); i += 2) {
                         currentMaze[changes[i].first][changes[i].second] = FREE_SPACE;
                         currentMaze[changes[i + 1].first][changes[i + 1].second] = OBSTACLE;
                     }
                     root->maze = make_unique<vector<vector<int>>>(currentMaze);
 
-                    // Identify affected leaves
                     unordered_set<MazeNode*> changedLeaves;
                     for (const auto& [r, c] : changes) {
                         MazeNode* leaf = root->findSubEnvironment(r, c);
@@ -2393,7 +2403,6 @@ void runFullExperiment() {
                     }
                     vector<MazeNode*> changedLeafSet(changedLeaves.begin(), changedLeaves.end());
 
-                    // Replan and test
                     double adaptTime;
                     if (name == "A* Oracle") {
                         auto start = chrono::high_resolution_clock::now();
@@ -2416,6 +2425,11 @@ void runFullExperiment() {
                     totalSuccessRate += stepSuccessRate;
                     totalPathLength += stepAvgPath;
                     stepsCompleted++;
+
+                    // Write per-step data
+                    detailedOut << name << "," << size << "," << diffName << "," << t + 1 << ","
+                                << numChanges << "," << adaptTime << "," << stepSuccessRate << ","
+                                << stepAvgPath << "\n";
                 }
 
                 results[name][s][d] = {
@@ -2429,8 +2443,9 @@ void runFullExperiment() {
             }
         }
     }
+    detailedOut.close();
 
-    // Save results
+    // Save aggregated results
     ofstream out("results_incremental.csv");
     out << "Approach,Size,Difficulty,InitialTime,AdaptTimePerStep,AvgSuccessRate,AvgPathLength\n";
     for (int s = 0; s < sizes.size(); ++s) {
