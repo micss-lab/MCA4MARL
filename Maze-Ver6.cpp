@@ -10,6 +10,7 @@
 #include <cstdlib>
 #include <fstream>
 #include <functional>
+#include <future>
 #include <iomanip>
 #include <iostream>
 #include <map>
@@ -871,98 +872,78 @@ tuple<bool, int, vector<pair<int, int>>> findValidPath(const vector<vector<int>>
 }
 
 //*************************************************************************/
-tuple<double, double, double> testAgent(const vector<vector<int>>& maze, MazeNode* node, const int rows, const int cols) {
+tuple<double, double, double> testAgent(const vector<vector<int>>& maze, MazeNode* node,
+                                        const int rows, const int cols) {
     const int maxEpisodes = rows + cols;
 
-    double totalPlanningTime = 0.0;
-    int successfulPaths = 0;
-    int totalSteps = 0;
+    // Collect all valid positions to test
+    vector<pair<int, int>> positions;
     int totalPositions = 0;
-
-    // Loop over all positions
     for (int x1 = 0; x1 < rows; ++x1) {
         for (int y1 = 0; y1 < cols; ++y1) {
-            if (maze[x1][y1] == OBSTACLE) continue; // Skip obstacles
-            totalPositions++;
-
-            auto start = chrono::high_resolution_clock::now();
-
-            // Try finding a valid path with top-two actions using the node's sparse Q-table
-            auto [success, steps, path] = findValidPath(maze, node, rows, cols, x1, y1, maxEpisodes);
-
-            auto end = chrono::high_resolution_clock::now();
-            totalPlanningTime += chrono::duration<double>(end - start).count();
-
-            if (success) {
-                successfulPaths++;
-                totalSteps += steps;
+            if (maze[x1][y1] != OBSTACLE) {
+                positions.emplace_back(x1, y1);
+                totalPositions++;
             }
         }
     }
 
+    // Struct to hold results from each thread
+    struct ThreadResult {
+        double planningTime = 0.0;
+        int successfulPaths = 0;
+        int totalSteps = 0;
+    };
+
+    // Function to process a chunk of positions and return results
+    auto processChunk = [&](size_t startIdx, size_t endIdx) -> ThreadResult {
+        ThreadResult result;
+        for (size_t i = startIdx; i < endIdx && i < positions.size(); ++i) {
+            int x1 = positions[i].first;
+            int y1 = positions[i].second;
+
+            auto start = chrono::high_resolution_clock::now();
+            auto [success, steps, path] = findValidPath(maze, node, rows, cols, x1, y1, maxEpisodes);
+            auto end = chrono::high_resolution_clock::now();
+
+            result.planningTime += chrono::duration<double>(end - start).count();
+            if (success) {
+                result.successfulPaths++;
+                result.totalSteps += steps;
+            }
+        }
+        return result;
+    };
+
+    // Split into chunks and process in parallel
+    const size_t totalTasks = positions.size();
+    constexpr size_t chunkSize = 20;
+    vector<future<ThreadResult>> futures;
+
+    for (size_t i = 0; i < totalTasks; i += chunkSize) {
+        size_t startIdx = i;
+        size_t endIdx = min(i + chunkSize, totalTasks);
+        futures.push_back(async(launch::async, processChunk, startIdx, endIdx));
+    }
+
+    // Aggregate results (single-threaded, after all threads finish)
+    double totalPlanningTime = 0.0;
+    int successfulPaths = 0;
+    int totalSteps = 0;
+    for (auto& f : futures) {
+        ThreadResult r = f.get();
+        totalPlanningTime += r.planningTime;
+        successfulPaths += r.successfulPaths;
+        totalSteps += r.totalSteps;
+    }
+
+    // Compute final metrics
     double successRate = totalPositions > 0 ? static_cast<double>(successfulPaths) / totalPositions : 0.0;
     double avgPathLength = successfulPaths > 0 ? static_cast<double>(totalSteps) / successfulPaths : 0.0;
     double avgPlanningTime = totalPositions > 0 ? totalPlanningTime / totalPositions : 0.0;
 
     return {avgPlanningTime, successRate, avgPathLength};
 }
-
-//*************************************************************************/
-// tuple<double, double, double> testAgent(const vector<vector<int> > &maze,
-//                                         const vector<vector<vector<double> > > &qTable, const int rows, const int cols,
-//                                         const int nrTestEpisodes) {
-//     const int maxEpisodes = rows + cols;
-//
-//     // Keep track of statistics
-//     double totalPlanningTime = 0.0;
-//     int successfulPaths = 0;
-//     int totalSteps = 0;
-//
-//     // Test the agent over multiple episodes
-//     for (int test = 0; test < nrTestEpisodes; test++) {
-//         int x1, y1;
-//         tie(x1, y1) = selectFirstPlace(maze, 0, 0, rows - 1, cols - 1);
-//
-//         // Measure the planning time for this episode
-//         auto start = chrono::high_resolution_clock::now();
-//         int steps = 0;
-//         bool success = false;
-//
-//         // Start generating one episode
-//         while (steps < maxEpisodes) {
-//             int act = selectActionWithSoftBoundaries(qTable, rows, cols, x1, y1, 0.0);
-//             int x2, y2;
-//             double actionReward;
-//             tie(x2, y2, act, actionReward) = performAction(maze, rows, cols, x1, y1, act);
-//             steps++;
-//
-//             // Check if the exit condition is met
-//             if (checkExit(maze, x2, y2)) {
-//                 success = true;
-//                 break;
-//             }
-//             x1 = x2;
-//             y1 = y2;
-//         }
-//
-//         // Measure the planning time for this episode
-//         auto end = chrono::high_resolution_clock::now();
-//         totalPlanningTime += chrono::duration<double>(end - start).count();
-//
-//         // Update statistics
-//         if (success) {
-//             successfulPaths++;
-//             totalSteps += steps;
-//         }
-//     }
-//
-//     // Calculate the success rate, average path length, and average planning time
-//     double successRate = static_cast<double>(successfulPaths) / nrTestEpisodes;
-//     double avgPathLength = successfulPaths > 0 ? static_cast<double>(totalSteps) / successfulPaths : 0.0;
-//     double avgPlanningTime = totalPlanningTime / nrTestEpisodes;
-//
-//     return make_tuple(avgPlanningTime, successRate, avgPathLength);
-// }
 
 //*************************************************************************/
 void splitMaze(MazeNode* node, const vector<vector<int>>& fullMaze, const int rows, const int cols,
@@ -1317,16 +1298,32 @@ unordered_map<pair<int, int>, vector<pair<int, int> >, HashPair> computeAllShort
 
 //*************************************************************************/
 tuple<double, double, double> testAgentAStar(const vector<vector<int>>& maze, const int rows, const int cols,
-                                             const unordered_map<pair<int, int>, vector<pair<int, int>>, HashPair>& shortestPaths) {
-    double totalPlanningTime = 0.0;
-    int successfulPaths = 0;
-    int totalSteps = 0;
+                                             const unordered_map<pair<int, int>, vector<pair<int, int>>, HashPair>& shortestPaths) { // Tunable number of threads
+    // Collect all valid positions to test
+    vector<pair<int, int>> positions;
     int totalPositions = 0;
+    for (int x1 = 0; x1 < rows; ++x1) {
+        for (int y1 = 0; y1 < cols; ++y1) {
+            if (maze[x1][y1] != OBSTACLE) {
+                positions.emplace_back(x1, y1);
+                totalPositions++;
+            }
+        }
+    }
 
-    for (int startX = 0; startX < rows; ++startX) {
-        for (int startY = 0; startY < cols; ++startY) {
-            if (maze[startX][startY] == OBSTACLE) continue; // Skip obstacles
-            totalPositions++;
+    // Struct to hold results from each thread
+    struct ThreadResult {
+        double planningTime = 0.0;
+        int successfulPaths = 0;
+        int totalSteps = 0;
+    };
+
+    // Function to process a chunk of positions and return results
+    auto processChunk = [&](size_t startIdx, size_t endIdx) -> ThreadResult {
+        ThreadResult result;
+        for (size_t i = startIdx; i < endIdx && i < positions.size(); ++i) {
+            int startX = positions[i].first;
+            int startY = positions[i].second;
 
             auto start = chrono::high_resolution_clock::now();
             bool success = false;
@@ -1336,9 +1333,9 @@ tuple<double, double, double> testAgentAStar(const vector<vector<int>>& maze, co
             if (it != shortestPaths.end()) {
                 const vector<pair<int, int>>& path = it->second;
                 success = !path.empty();
-                for (size_t i = 0; i < path.size() && success; ++i) {
-                    const int x = path[i].first;
-                    const int y = path[i].second;
+                for (size_t j = 0; j < path.size() && success; ++j) {
+                    const int x = path[j].first;
+                    const int y = path[j].second;
                     if (maze[x][y] == OBSTACLE) {
                         success = false;
                     }
@@ -1349,15 +1346,38 @@ tuple<double, double, double> testAgentAStar(const vector<vector<int>>& maze, co
             }
 
             auto end = chrono::high_resolution_clock::now();
-            totalPlanningTime += chrono::duration<double>(end - start).count();
-
+            result.planningTime += chrono::duration<double>(end - start).count();
             if (success) {
-                successfulPaths++;
-                totalSteps += steps;
+                result.successfulPaths++;
+                result.totalSteps += steps;
             }
         }
+        return result;
+    };
+
+    // Split into chunks and process in parallel
+    const size_t totalTasks = positions.size();
+    constexpr size_t chunkSize = 20;
+    vector<future<ThreadResult>> futures;
+
+    for (size_t i = 0; i < totalTasks; i += chunkSize) {
+        size_t startIdx = i;
+        size_t endIdx = min(i + chunkSize, totalTasks);
+        futures.push_back(async(launch::async, processChunk, startIdx, endIdx));
     }
 
+    // Aggregate results (single-threaded, after all threads finish)
+    double totalPlanningTime = 0.0;
+    int successfulPaths = 0;
+    int totalSteps = 0;
+    for (auto& f : futures) {
+        ThreadResult r = f.get();
+        totalPlanningTime += r.planningTime;
+        successfulPaths += r.successfulPaths;
+        totalSteps += r.totalSteps;
+    }
+
+    // Compute final metrics
     double successRate = totalPositions > 0 ? static_cast<double>(successfulPaths) / totalPositions : 0.0;
     double avgPathLength = successfulPaths > 0 ? static_cast<double>(totalSteps) / successfulPaths : 0.0;
     double avgPlanningTime = totalPositions > 0 ? totalPlanningTime / totalPositions : 0.0;
@@ -2379,12 +2399,11 @@ struct Metrics {
 // }
 
 void runFullExperiment() {
-    vector<int> sizes = {20, 50, 100};
-    // vector<int> sizes = {20, 50, 100, 200, 300};
+    vector<int> sizes = {20, 50, 100, 200, 300};
     vector<tuple<double, double, double>> difficulties = {
-        {0.8, 0.19, 0.01},
-        {0.7, 0.29, 0.01},
-        {0.6, 0.395, 0.005}
+        {0.8, 0.19, 0.01},  // Easy
+        {0.7, 0.29, 0.01},  // Medium
+        {0.6, 0.395, 0.005} // Hard
     };
     vector<pair<string, function<void(MazeNode*, int, int)>>> approaches = {
         {"A* Static", testAStarPerformance},
@@ -2392,7 +2411,6 @@ void runFullExperiment() {
         {"Local", testLocalPathPlanning},
         {"Hierarchy", testHierarchicalPathPlanning}
     };
-    const int maxTimeSteps = 50;
 
     // Detailed output file for per-step data
     ofstream detailedOut("results_incremental_detailed_new.csv");
@@ -2418,10 +2436,14 @@ void runFullExperiment() {
             string diffName = (d == 0 ? "Easy" : d == 1 ? "Medium" : "Hard");
             cout << "\n\nDifficulty: " << diffName;
 
-            // Create the initial maze
+            // Simple scaling: maxTimeSteps proportional to size
+            const int k = 2; // Tune this (1 or 2 recommended)
+            const int maxTimeSteps = k * size;
+            cout << " - maxTimeSteps: " << maxTimeSteps;
+
             auto initialMaze = vector<vector<int>>(size, vector<int>(size, 0));
             createMaze(initialMaze, size, size, freeProb, obstProb, chargeProb);
-            vector<pair<int, vector<pair<int, int>>>> changeSequence(maxTimeSteps); // Pair: numChanges, changes
+            vector<pair<int, vector<pair<int, int>>>> changeSequence(maxTimeSteps);
             MazeNode* tempRoot = createSubEnvironments(initialMaze, size, size);
 
             // Simulate change positions upfront
