@@ -134,14 +134,6 @@ public:
         return nullptr;
     }
 
-    // Initialize Q-table only when needed (leaves and parents)
-    // void initQTable() {
-    //     if (!qTable) {
-    //         qTable = make_unique<vector<vector<vector<double> > > >(
-    //             rows, vector<vector<double> >(cols, vector<double>(ACTION_COUNT, 0.0)));
-    //     }
-    // }
-
     // Initialize sparse Q-table
     void initQTable() {
         if (!qTable) {
@@ -710,8 +702,11 @@ void trainAgentWithStoppingCriterion(MazeNode* node, const vector<vector<int>>& 
     double actionReward = 0;
     bool converged = false;
 
+    // Initialize Q-table if not already done
+    node->initQTable();
+
     // Store previous Q-table state for convergence check
-    auto prevQTable = node->qTable ? *node->qTable : unordered_map<pair<int, int>, vector<double>, pair_hash>();
+    auto prevQTable = *node->qTable;
 
     // Convergence parameters
     constexpr double threshold = 5e-4;
@@ -949,8 +944,6 @@ tuple<double, double, double> testAgent(const vector<vector<int>>& maze, MazeNod
 void splitMaze(MazeNode* node, const vector<vector<int>>& fullMaze, const int rows, const int cols,
                const int startRow, const int startCol, const int endRow, const int endCol) {
     if ((endRow - startRow + 1) <= 20 && (endCol - startCol + 1) <= 20) {
-        // Leaf node: Initialize Q-table
-        node->initQTable(); // Pass fullMaze for charging station count
         return;
     }
 
@@ -971,12 +964,6 @@ void splitMaze(MazeNode* node, const vector<vector<int>>& fullMaze, const int ro
     splitMaze(child2, fullMaze, rows, cols, startRow, midCol + 1, midRow, endCol);
     splitMaze(child3, fullMaze, rows, cols, midRow + 1, startCol, endRow, midCol);
     splitMaze(child4, fullMaze, rows, cols, midRow + 1, midCol + 1, endRow, endCol);
-
-    // Parents of leaves: Initialize Q-table if all children are leaves
-    if (child1->children.empty() && child2->children.empty() &&
-        child3->children.empty() && child4->children.empty()) {
-        node->initQTable(); // Pass fullMaze for charging station count
-        }
 }
 
 //*************************************************************************/
@@ -2286,14 +2273,15 @@ struct Metrics {
 
 //*************************************************************************/
 void runFullExperiment() {
-    vector<int> sizes = {20, 50, 100};
+    vector<int> sizes = {100};
     vector<tuple<double, double, double>> difficulties = {
         {0.8, 0.19, 0.01},  // Easy
         {0.7, 0.29, 0.01},  // Medium
         {0.6, 0.395, 0.005} // Hard
     };
     // Approaches to test
-    vector<string> approaches = {"A* Static","A* Oracle","Local","Hierarchy","HierarchySmart"};
+    vector<string> approaches = {"HierarchySmart"};
+    // vector<string> approaches = {"A* Static","A* Oracle","Local","Hierarchy","HierarchySmart"};
 
     // Detailed output file for per-step data
     ofstream detailedOut("results_incremental_detailed_smart.csv");
