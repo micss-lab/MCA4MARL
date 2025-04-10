@@ -3,17 +3,17 @@ import matplotlib.pyplot as plt
 import os
 
 # Create 'plots' directory if it doesn't exist
-plots_dir = "plots_incremental_new"
+plots_dir = "plots_incremental_smart"
 if not os.path.exists(plots_dir):
     os.makedirs(plots_dir)
 
 # Load data
-agg_data = pd.read_csv("results_incremental_new.csv")
-detailed_data = pd.read_csv("results_incremental_detailed_new.csv")
+agg_data = pd.read_csv("results_incremental_smart.csv")
+detailed_data = pd.read_csv("results_incremental_detailed_smart.csv")
 
 # Define difficulties and sizes
 difficulties = ["Easy", "Medium", "Hard"]
-sizes = [20, 50, 100, 200, 300]
+sizes = [20, 50, 100]
 
 # 1. Line Plots: Adaptation Time vs. Maze Size for Each Difficulty
 for difficulty in difficulties:
