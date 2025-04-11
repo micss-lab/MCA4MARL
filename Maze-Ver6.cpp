@@ -1242,16 +1242,7 @@ double computeLeafSuccessRate(const MazeNode *root, const MazeNode *node) {
 
 /*************************************************************************/
 double getRetrainingThreshold(const int mazeSize) {
-    if (mazeSize <= 100) {
-        return 0.02; // For small mazes, allow a larger drop
-    }
-    if (mazeSize <= 200) {
-        return 0.015; // For medium mazes, allow a moderate drop
-    }
-    if (mazeSize <= 300) {
-        return 0.01; // For large mazes, require a smaller drop
-    }
-    return 0.02; // Default threshold
+    return 0.01;
 }
 
 /*************************************************************************/
@@ -1817,7 +1808,7 @@ void runFullExperiment() {
 
         // Iterate over difficulties
         for (int d = 0; d < difficulties.size(); ++d) {
-            srand(d);
+            srand(d + 100);
             auto [freeProb, obstProb, chargeProb] = difficulties[d];
             string diffName = (d == 0 ? "Easy" : d == 1 ? "Medium" : "Hard");
             cout << "\n\nDifficulty: " << diffName;
