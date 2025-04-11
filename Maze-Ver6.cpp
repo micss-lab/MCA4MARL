@@ -590,7 +590,7 @@ tuple<bool, int, vector<pair<int, int> > > findValidPath(const vector<vector<int
         }
 
         // Select top k actions based on Q-values
-        vector<int> actions = selectTopKActions(node->getQValues(x, y), rows, cols, x, y, 1);
+        vector<int> actions = selectTopKActions(node->getQValues(x, y), rows, cols, x, y, 2);
         for (const int act: actions) {
             int newX = x + moves[act].first;
             int newY = y + moves[act].second;
@@ -668,10 +668,10 @@ tuple<double, double, double> testAgent(const vector<vector<int> > &maze, const 
     int successfulPaths = 0;
     int totalSteps = 0;
     for (auto &f: futures) {
-        auto [planningTime, successfulPaths, totalSteps] = f.get();
-        totalPlanningTime += planningTime;
-        successfulPaths += successfulPaths;
-        totalSteps += totalSteps;
+        ThreadResult r = f.get();
+        totalPlanningTime += r.planningTime;
+        successfulPaths += r.successfulPaths;
+        totalSteps += r.totalSteps;
     }
 
     // Compute final metrics
@@ -1022,10 +1022,10 @@ tuple<double, double, double> testAgentAStar(const vector<vector<int> > &maze, c
     int successfulPaths = 0;
     int totalSteps = 0;
     for (auto &f: futures) {
-        auto [planningTime, successfulPaths, totalSteps] = f.get();
-        totalPlanningTime += planningTime;
-        successfulPaths += successfulPaths;
-        totalSteps += totalSteps;
+        ThreadResult r = f.get();
+        totalPlanningTime += r.planningTime;
+        successfulPaths += r.successfulPaths;
+        totalSteps += r.totalSteps;
     }
 
     // Compute final metrics
@@ -1817,7 +1817,7 @@ void runFullExperiment() {
 
         // Iterate over difficulties
         for (int d = 0; d < difficulties.size(); ++d) {
-            srand(d + 100);
+            srand(d);
             auto [freeProb, obstProb, chargeProb] = difficulties[d];
             string diffName = (d == 0 ? "Easy" : d == 1 ? "Medium" : "Hard");
             cout << "\n\nDifficulty: " << diffName;
