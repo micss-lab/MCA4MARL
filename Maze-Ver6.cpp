@@ -235,15 +235,56 @@ int checkExit(const vector<vector<int> > &matrix, const int x, const int y) {
 }
 
 /*************************************************************************/
+// pair<int, int> selectFirstPlace(const vector<vector<int> > &maze, const int startRow, const int startCol,
+//                                 const int endRow, const int endCol) {
+//     int x, y;
+//     // Keep generating random indices until a free space is found
+//     do {
+//         x = rand() % (endRow - startRow) + startRow;
+//         y = rand() % (endCol - startCol) + startCol;
+//     } while (maze[x][y] != FREE_SPACE);
+//     return make_pair(x, y);
+// }
+
+/*************************************************************************/
+struct StartStats {
+    int attempts = 0;
+    int successes = 0;
+    [[nodiscard]] double successRate() const { return attempts > 0 ? static_cast<double>(successes) / attempts : 0.0; }
+};
+
+/*************************************************************************/
 pair<int, int> selectFirstPlace(const vector<vector<int> > &maze, const int startRow, const int startCol,
-                                const int endRow, const int endCol) {
-    int x, y;
-    // Keep generating random indices until a free space is found
-    do {
-        x = rand() % (endRow - startRow) + startRow;
-        y = rand() % (endCol - startCol) + startCol;
-    } while (maze[x][y] != FREE_SPACE);
-    return make_pair(x, y);
+                                const int endRow, const int endCol, const int counter, const int minEpisodes,
+                                const unordered_map<pair<int, int>, StartStats, HashPair> &startStats, mt19937 &rng) {
+    constexpr int initialRandomEpisodes = 100;
+    if (counter < initialRandomEpisodes || startStats.empty()) {
+        int r, c;
+        do {
+            r = startRow + rand() % (endRow - startRow + 1);
+            c = startCol + rand() % (endCol - startCol + 1);
+        } while (maze[r][c] == OBSTACLE);
+        return {r, c};
+    }
+
+    // Build weights: lower success rate = higher weight
+    vector<pair<int, int> > positions;
+    vector<double> weights;
+    constexpr double epsilon = 0.1; // Ensure non-zero probability
+    for (int x = startRow; x <= endRow; ++x) {
+        for (int y = startCol; y <= endCol; ++y) {
+            if (maze[x][y] == OBSTACLE) continue;
+            positions.emplace_back(x, y);
+            auto it = startStats.find({x, y});
+            const double successRate = it != startStats.end() ? it->second.successRate() : 0.0;
+            weights.push_back(1.0 - successRate + epsilon);
+        }
+    }
+
+    // Weighted random selection
+    discrete_distribution<int> dist(weights.begin(), weights.end());
+    const auto idx = dist(rng);
+    return positions[idx];
 }
 
 /*************************************************************************/
@@ -427,53 +468,169 @@ struct Experience {
 };
 
 /*************************************************************************/
-void trainAgentWithStoppingCriterion(MazeNode *node, const vector<vector<int> > &maze, const int rows, const int cols,
+// void trainAgentWithStoppingCriterion(MazeNode *node, const vector<vector<int> > &maze, const int rows, const int cols,
+//                                      const int startRow, const int startCol, const int endRow, const int endCol,
+//                                      double epsilon, const int maxStepsPerEpisode) {
+//     int arrival = 0, x2, y2, iteration = 0, counter = 0, stableEpisodes = 0;
+//     double actionReward = 0;
+//     bool converged = false;
+//
+//     // Initialize Q-table if not already done
+//     node->initQTable();
+//
+//     // Store previous Q-table state for convergence check
+//     auto prevQTable = *node->qTable;
+//
+//     // Convergence parameters
+//     constexpr double threshold = 5e-4;
+//     constexpr int patience = 10;
+//     constexpr double decayRate = 0.999;
+//     constexpr int minEpisodes = 1000;
+//
+//     // Experience replay buffer
+//     vector<Experience> replayBuffer;
+//     constexpr int bufferSize = 500;
+//     replayBuffer.reserve(bufferSize);
+//     constexpr int batchSize = 64;
+//
+//     // Main training loop
+//     while (!converged && counter < EPISODE_COUNT) {
+//         auto [x1, y1] = selectFirstPlace(maze, startRow, startCol, endRow, endCol);
+//         iteration = 1;
+//
+//         // Reset episode
+//         while (arrival == 0 && iteration < maxStepsPerEpisode) {
+//             // Select action using epsilon-greedy policy and perform it
+//             int act = selectAction(node->getQValues(x1, y1), x1, y1, epsilon, rows, cols, false, startRow, startCol,
+//                                    endRow, endCol);
+//             tie(x2, y2, act, actionReward) = performAction(maze, rows, cols, x1, y1, act);
+//
+//             // Store experience in replay buffer and update Q-table
+//             replayBuffer.push_back({x1, y1, act, actionReward, x2, y2});
+//             if (replayBuffer.size() > bufferSize) replayBuffer.erase(replayBuffer.begin());
+//             updateQTable(node, x1, y1, act, actionReward, x2, y2);
+//
+//             // Perform experience replay
+//             if (replayBuffer.size() >= batchSize && counter > minEpisodes) {
+//                 for (int i = 0; i < batchSize; i++) {
+//                     const int idx = rand() % replayBuffer.size();
+//                     const auto &[x1, y1, action, reward, x2, y2] = replayBuffer[idx];
+//                     updateQTable(node, x1, y1, action, reward, x2, y2);
+//                 }
+//             }
+//             arrival = checkExit(maze, x2, y2);
+//             x1 = x2;
+//             y1 = y2;
+//             iteration++;
+//         }
+//
+//         arrival = 0;
+//         epsilon = max(0.01, epsilon * decayRate);
+//         // cout << "Episode: " << counter << ", Epsilon: " << fixed << setprecision(4) << epsilon
+//         //      << ", Iteration: " << iteration << "\n";
+//
+//         // Check for convergence every 50 episodes
+//         if (counter % 50 == 0 && counter >= minEpisodes) {
+//             double maxChange = 0.0;
+//             for (const auto &[pos, qValues]: *node->qTable) {
+//                 const int i = pos.first;
+//                 const int j = pos.second;
+//                 if (i >= startRow && i <= endRow && j >= startCol && j <= endCol) {
+//                     auto prevIt = prevQTable.find(pos);
+//                     const vector<double> &prevQ = (prevIt != prevQTable.end())
+//                                                       ? prevIt->second
+//                                                       : vector<double>(ACTION_COUNT, 0.0);
+//                     for (int a = 0; a < ACTION_COUNT; a++) {
+//                         maxChange = max(maxChange, fabs(qValues[a] - prevQ[a]));
+//                     }
+//                 }
+//             }
+//
+//             // Check for convergence
+//             if (maxChange < threshold && stableEpisodes >= patience) {
+//                 converged = true;
+//             } else if (maxChange < threshold) {
+//                 stableEpisodes++;
+//             } else {
+//                 stableEpisodes = 0;
+//             }
+//             prevQTable = *node->qTable;
+//         }
+//         counter++;
+//     }
+//
+//     // Clean up Q-table: Remove entries outside subenvironment bounds
+//     auto &qTable = *node->qTable;
+//     for (auto it = qTable.begin(); it != qTable.end();) {
+//         const int x = it->first.first;
+//         const int y = it->first.second;
+//         if (x < startRow || x > endRow || y < startCol || y > endCol) {
+//             it = qTable.erase(it); // Remove out-of-bounds entry
+//         } else {
+//             ++it; // Move to next entry
+//         }
+//     }
+// }
+
+/*************************************************************************/
+unordered_map<pair<int, int>, int, HashPair> getGreedyPolicy(const MazeNode *node) {
+    unordered_map<pair<int, int>, int, HashPair> policy;
+    for (const auto &[pos, qValues]: *node->qTable) {
+        int bestAction = 0;
+        double maxQ = qValues[0];
+        for (int a = 1; a < ACTION_COUNT; ++a) {
+            if (qValues[a] > maxQ) {
+                maxQ = qValues[a];
+                bestAction = a;
+            }
+        }
+        policy[pos] = bestAction;
+    }
+    return policy;
+}
+
+/*************************************************************************/
+void trainAgentWithStoppingCriterion(MazeNode* node, const vector<vector<int>>& maze, const int rows, const int cols,
                                      const int startRow, const int startCol, const int endRow, const int endCol,
                                      double epsilon, const int maxStepsPerEpisode) {
     int arrival = 0, x2, y2, iteration = 0, counter = 0, stableEpisodes = 0;
     double actionReward = 0;
     bool converged = false;
 
-    // Initialize Q-table if not already done
-    node->initQTable();
+    if (!node->qTable) node->initQTable();
 
-    // Store previous Q-table state for convergence check
-    auto prevQTable = *node->qTable;
+    int minEpisodes = 300 + 10 * (endRow - startRow + 1);
+    int maxEpisodes = min(20000, 1000 + 100 * (endRow - startRow + 1));
+    constexpr int patience = 50;
+    constexpr double decayRate = 0.995;
+    auto prevPolicy = getGreedyPolicy(node);
 
-    // Convergence parameters
-    constexpr double threshold = 5e-4;
-    constexpr int patience = 20;
-    constexpr double decayRate = 0.999;
-    constexpr int minEpisodes = 500;
-
-    // Experience replay buffer
     vector<Experience> replayBuffer;
-    constexpr int bufferSize = 1000;
+    constexpr int bufferSize = 500;
     replayBuffer.reserve(bufferSize);
-    constexpr int batchSize = 64;
+    constexpr int batchSize = 32;
 
-    // Main training loop
-    while (!converged && counter < EPISODE_COUNT) {
-        auto [x1, y1] = selectFirstPlace(maze, startRow, startCol, endRow, endCol);
+    // Track starting position success
+    unordered_map<pair<int, int>, StartStats, HashPair> startStats;
+    mt19937 rng(random_device{}()); // Better random generator
+
+    while (!converged && counter < maxEpisodes) {
+        auto [x1, y1] = selectFirstPlace(maze, startRow, startCol, endRow, endCol, counter, minEpisodes, startStats, rng);
+        startStats[{x1, y1}].attempts++;
         iteration = 1;
 
-        // Reset episode
         while (arrival == 0 && iteration < maxStepsPerEpisode) {
-            // Select action using epsilon-greedy policy and perform it
-            int act = selectAction(node->getQValues(x1, y1), x1, y1, epsilon, rows, cols, false, startRow, startCol,
-                                   endRow, endCol);
+            int act = selectAction(node->getQValues(x1, y1), x1, y1, epsilon, rows, cols, false,
+                                   startRow, startCol, endRow, endCol);
             tie(x2, y2, act, actionReward) = performAction(maze, rows, cols, x1, y1, act);
-
-            // Store experience in replay buffer and update Q-table
             replayBuffer.push_back({x1, y1, act, actionReward, x2, y2});
             if (replayBuffer.size() > bufferSize) replayBuffer.erase(replayBuffer.begin());
             updateQTable(node, x1, y1, act, actionReward, x2, y2);
 
-            // Perform experience replay
-            if (replayBuffer.size() >= batchSize && counter > minEpisodes) {
-                for (int i = 0; i < batchSize; i++) {
+            if (replayBuffer.size() >= batchSize && counter > minEpisodes / 2 && iteration % 10 == 0) {
+                for (int i = 0; i < batchSize; ++i) {
                     const int idx = rand() % replayBuffer.size();
-                    const auto &[x1, y1, action, reward, x2, y2] = replayBuffer[idx];
+                    const auto& [x1, y1, action, reward, x2, y2] = replayBuffer[idx];
                     updateQTable(node, x1, y1, action, reward, x2, y2);
                 }
             }
@@ -483,48 +640,38 @@ void trainAgentWithStoppingCriterion(MazeNode *node, const vector<vector<int> > 
             iteration++;
         }
 
+        if (arrival == 1) startStats[{x1, y1}].successes++;
         arrival = 0;
-        epsilon = max(0.01, epsilon * decayRate);
+        epsilon = max(0.005, epsilon * decayRate);
+        counter++;
 
-        // Check for convergence every 50 episodes
-        if (counter % 50 == 0 && counter >= minEpisodes) {
-            double maxChange = 0.0;
-            for (const auto &[pos, qValues]: *node->qTable) {
-                const int i = pos.first;
-                const int j = pos.second;
-                if (i >= startRow && i <= endRow && j >= startCol && j <= endCol) {
-                    auto prevIt = prevQTable.find(pos);
-                    const vector<double> &prevQ = (prevIt != prevQTable.end())
-                                                      ? prevIt->second
-                                                      : vector<double>(ACTION_COUNT, 0.0);
-                    for (int a = 0; a < ACTION_COUNT; a++) {
-                        maxChange = max(maxChange, fabs(qValues[a] - prevQ[a]));
-                    }
+        if (counter % 10 == 0 && counter >= minEpisodes) {
+            auto currPolicy = getGreedyPolicy(node);
+            bool policyUnchanged = true;
+            for (const auto& [pos, action] : currPolicy) {
+                if (prevPolicy[pos] != action) {
+                    policyUnchanged = false;
+                    break;
                 }
             }
-
-            // Check for convergence
-            if (maxChange < threshold && stableEpisodes >= patience) {
-                converged = true;
-            } else if (maxChange < threshold) {
+            if (policyUnchanged) {
                 stableEpisodes++;
+                if (stableEpisodes >= patience) converged = true;
             } else {
                 stableEpisodes = 0;
+                prevPolicy = currPolicy;
             }
-            prevQTable = *node->qTable;
         }
-        counter++;
     }
 
-    // Clean up Q-table: Remove entries outside subenvironment bounds
-    auto &qTable = *node->qTable;
+    auto& qTable = *node->qTable;
     for (auto it = qTable.begin(); it != qTable.end();) {
         const int x = it->first.first;
         const int y = it->first.second;
         if (x < startRow || x > endRow || y < startCol || y > endCol) {
-            it = qTable.erase(it); // Remove out-of-bounds entry
+            it = qTable.erase(it);
         } else {
-            ++it; // Move to next entry
+            ++it;
         }
     }
 }
@@ -590,7 +737,7 @@ tuple<bool, int, vector<pair<int, int> > > findValidPath(const vector<vector<int
         }
 
         // Select top k actions based on Q-values
-        vector<int> actions = selectTopKActions(node->getQValues(x, y), rows, cols, x, y, 2);
+        vector<int> actions = selectTopKActions(node->getQValues(x, y), rows, cols, x, y, 1);
         for (const int act: actions) {
             int newX = x + moves[act].first;
             int newY = y + moves[act].second;
@@ -653,7 +800,7 @@ tuple<double, double, double> testAgent(const vector<vector<int> > &maze, const 
 
     // Split into chunks and process in parallel
     const size_t totalTasks = positions.size();
-    constexpr size_t chunkSize = 20;
+    constexpr size_t chunkSize = 50;
     vector<future<ThreadResult> > futures;
 
     // Determine the number of threads to use
@@ -856,10 +1003,7 @@ void simulateEnvironmentChanges(const MazeNode *root, const int numSteps, vector
 /*************************************************************************/
 struct Node {
     int x, y, g, h;
-
-    bool operator>(const Node &other) const {
-        return (g + h) > (other.g + other.h);
-    }
+    bool operator>(const Node& other) const { return (g + h) > (other.g + h); }
 };
 
 /*************************************************************************/
@@ -869,9 +1013,9 @@ int heuristic(const int x1, const int y1, const int x2, const int y2) {
 }
 
 /*************************************************************************/
-vector<pair<int, int> > reconstructPath(unordered_map<pair<int, int>, pair<int, int>, HashPair> &cameFrom, int startX,
-                                        int startY, const int goalX, const int goalY) {
-    vector<pair<int, int> > path;
+vector<pair<int, int>> reconstructPath(unordered_map<pair<int, int>, pair<int, int>, HashPair>& cameFrom,
+                                      const int startX, const int startY, const int goalX, const int goalY) {
+    vector<pair<int, int>> path;
     int x = goalX, y = goalY;
     while (!(x == startX && y == startY)) {
         path.emplace_back(x, y);
@@ -882,25 +1026,24 @@ vector<pair<int, int> > reconstructPath(unordered_map<pair<int, int>, pair<int, 
     return path;
 }
 
-/*************************************************************************/
-unordered_map<pair<int, int>, vector<pair<int, int> >, HashPair> computeAllShortestPaths(
-    const vector<vector<int> > &maze) {
+unordered_map<pair<int, int>, vector<pair<int, int>>, HashPair> computeAllShortestPaths(
+    const vector<vector<int>>& maze) {
     const int rows = maze.size();
     const int cols = maze[0].size();
-
-    // Directions for moving in 8 possible ways (up, down, left, right, and diagonals)
-    vector<pair<int, int> > directions = {
-        {-1, 0}, {1, 0}, {0, -1}, {0, 1}, // Up, Down, Left, Right
-        {-1, -1}, {-1, 1}, {1, -1}, {1, 1} // Diagonal moves
+    vector<pair<int, int>> directions = {
+        {-1, 0}, {1, 0}, {0, -1}, {0, 1}, {-1, -1}, {-1, 1}, {1, -1}, {1, 1}
     };
-    unordered_map<pair<int, int>, vector<pair<int, int> >, HashPair> shortestPaths;
+    unordered_map<pair<int, int>, vector<pair<int, int>>, HashPair> shortestPaths;
+    unordered_set<pair<int, int>, HashPair> processed; // Tracks positions with assigned paths
 
     // Iterate through all cells in the maze
-    for (int startX = 0; startX < rows; startX++) {
-        for (int startY = 0; startY < cols; startY++) {
-            if (maze[startX][startY] == OBSTACLE) continue; // Skip obstacles
+    for (int startX = 0; startX < rows; ++startX) {
+        for (int startY = 0; startY < cols; ++startY) {
+            if (maze[startX][startY] == OBSTACLE || processed.count({startX, startY})) {
+                continue; // Skip obstacles and processed positions
+            }
 
-            priority_queue<Node, vector<Node>, greater<> > openSet;
+            priority_queue<Node, vector<Node>, greater<>> openSet;
             unordered_map<pair<int, int>, int, HashPair> gScore;
             unordered_map<pair<int, int>, pair<int, int>, HashPair> cameFrom;
 
@@ -915,19 +1058,16 @@ unordered_map<pair<int, int>, vector<pair<int, int> >, HashPair> computeAllShort
                 Node current = openSet.top();
                 openSet.pop();
 
-                // Check if we reached the goal
                 if (maze[current.x][current.y] == CHARGING_STATION) {
                     goal = {current.x, current.y};
                     found = true;
                     break;
                 }
 
-                // Explore neighbors
-                for (auto [dx, dy]: directions) {
-                    int newX = current.x + dx;
-                    int newY = current.y + dy;
+                for (auto [dx, dy] : directions) {
+                    const int newX = current.x + dx;
+                    const int newY = current.y + dy;
 
-                    // Check bounds and if the cell is not an obstacle
                     if (newX >= 0 && newX < rows && newY >= 0 && newY < cols && maze[newX][newY] != OBSTACLE) {
                         const int newG = gScore[{current.x, current.y}] + 1;
                         if (!gScore.count({newX, newY}) || newG < gScore[{newX, newY}]) {
@@ -940,14 +1080,41 @@ unordered_map<pair<int, int>, vector<pair<int, int> >, HashPair> computeAllShort
                 }
             }
 
-            // Reconstruct the path if a goal was found
+            // Process the path and its sub-paths
             if (found) {
-                shortestPaths[{startX, startY}] = reconstructPath(cameFrom, startX, startY, goal.first, goal.second);
+                auto path = reconstructPath(cameFrom, startX, startY, goal.first, goal.second);
+                // Store sub-paths for all positions on the path
+                for (size_t i = 0; i < path.size(); ++i) {
+                    auto [px, py] = path[i];
+                    if (maze[px][py] == CHARGING_STATION && i == path.size() - 1) {
+                        shortestPaths[{px, py}] = {{px, py}}; // Station to itself
+                    } else {
+                        // Store suffix as shortest path (from px, py to goal)
+                        vector<pair<int, int>> subPath(path.begin() + i, path.end());
+                        auto pos = make_pair(px, py);
+                        // Only store if no path exists or new path is shorter
+                        if (!shortestPaths.count(pos) || subPath.size() < shortestPaths[pos].size()) {
+                            shortestPaths[pos] = subPath;
+                        }
+                    }
+                    processed.insert({px, py});
+                }
             } else {
                 shortestPaths[{startX, startY}] = {};
+                processed.insert({startX, startY});
             }
         }
     }
+
+    // Ensure all free positions have a path (in case any were missed)
+    for (int x = 0; x < rows; ++x) {
+        for (int y = 0; y < cols; ++y) {
+            if (maze[x][y] != OBSTACLE && !shortestPaths.count({x, y})) {
+                shortestPaths[{x, y}] = {};
+            }
+        }
+    }
+
     return shortestPaths;
 }
 
@@ -1007,7 +1174,7 @@ tuple<double, double, double> testAgentAStar(const vector<vector<int> > &maze, c
 
     // Split into chunks and process in parallel
     const size_t totalTasks = positions.size();
-    constexpr size_t chunkSize = 20;
+    constexpr size_t chunkSize = 50;
     vector<future<ThreadResult> > futures;
 
     // Determine the number of threads to use
@@ -1612,8 +1779,8 @@ void trainVDN(VDNTrainer &trainer, double epsilon) {
 
         for (Agent *agent: trainer.agents) {
             MazeNode *subEnv = agent->subEnv;
-            tie(agent->row, agent->col) = selectFirstPlace(*subEnv->maze, subEnv->startRow, subEnv->startCol,
-                                                           subEnv->endRow, subEnv->endCol);
+            // tie(agent->row, agent->col) = selectFirstPlace(*subEnv->maze, subEnv->startRow, subEnv->startCol,
+            //                                                subEnv->endRow, subEnv->endCol);
             (*subEnv->maze)[agent->row][agent->col] = AGENT;
         }
 
