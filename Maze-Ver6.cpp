@@ -257,7 +257,7 @@ struct StartStats {
 pair<int, int> selectFirstPlace(const vector<vector<int> > &maze, const int startRow, const int startCol,
                                 const int endRow, const int endCol, const int counter, const int minEpisodes,
                                 const unordered_map<pair<int, int>, StartStats, HashPair> &startStats, mt19937 &rng) {
-    constexpr int initialRandomEpisodes = 100;
+    constexpr int initialRandomEpisodes = 20;
     if (counter < initialRandomEpisodes || startStats.empty()) {
         int r, c;
         do {
@@ -468,169 +468,57 @@ struct Experience {
 };
 
 /*************************************************************************/
-// void trainAgentWithStoppingCriterion(MazeNode *node, const vector<vector<int> > &maze, const int rows, const int cols,
-//                                      const int startRow, const int startCol, const int endRow, const int endCol,
-//                                      double epsilon, const int maxStepsPerEpisode) {
-//     int arrival = 0, x2, y2, iteration = 0, counter = 0, stableEpisodes = 0;
-//     double actionReward = 0;
-//     bool converged = false;
-//
-//     // Initialize Q-table if not already done
-//     node->initQTable();
-//
-//     // Store previous Q-table state for convergence check
-//     auto prevQTable = *node->qTable;
-//
-//     // Convergence parameters
-//     constexpr double threshold = 5e-4;
-//     constexpr int patience = 10;
-//     constexpr double decayRate = 0.999;
-//     constexpr int minEpisodes = 1000;
-//
-//     // Experience replay buffer
-//     vector<Experience> replayBuffer;
-//     constexpr int bufferSize = 500;
-//     replayBuffer.reserve(bufferSize);
-//     constexpr int batchSize = 64;
-//
-//     // Main training loop
-//     while (!converged && counter < EPISODE_COUNT) {
-//         auto [x1, y1] = selectFirstPlace(maze, startRow, startCol, endRow, endCol);
-//         iteration = 1;
-//
-//         // Reset episode
-//         while (arrival == 0 && iteration < maxStepsPerEpisode) {
-//             // Select action using epsilon-greedy policy and perform it
-//             int act = selectAction(node->getQValues(x1, y1), x1, y1, epsilon, rows, cols, false, startRow, startCol,
-//                                    endRow, endCol);
-//             tie(x2, y2, act, actionReward) = performAction(maze, rows, cols, x1, y1, act);
-//
-//             // Store experience in replay buffer and update Q-table
-//             replayBuffer.push_back({x1, y1, act, actionReward, x2, y2});
-//             if (replayBuffer.size() > bufferSize) replayBuffer.erase(replayBuffer.begin());
-//             updateQTable(node, x1, y1, act, actionReward, x2, y2);
-//
-//             // Perform experience replay
-//             if (replayBuffer.size() >= batchSize && counter > minEpisodes) {
-//                 for (int i = 0; i < batchSize; i++) {
-//                     const int idx = rand() % replayBuffer.size();
-//                     const auto &[x1, y1, action, reward, x2, y2] = replayBuffer[idx];
-//                     updateQTable(node, x1, y1, action, reward, x2, y2);
-//                 }
-//             }
-//             arrival = checkExit(maze, x2, y2);
-//             x1 = x2;
-//             y1 = y2;
-//             iteration++;
-//         }
-//
-//         arrival = 0;
-//         epsilon = max(0.01, epsilon * decayRate);
-//         // cout << "Episode: " << counter << ", Epsilon: " << fixed << setprecision(4) << epsilon
-//         //      << ", Iteration: " << iteration << "\n";
-//
-//         // Check for convergence every 50 episodes
-//         if (counter % 50 == 0 && counter >= minEpisodes) {
-//             double maxChange = 0.0;
-//             for (const auto &[pos, qValues]: *node->qTable) {
-//                 const int i = pos.first;
-//                 const int j = pos.second;
-//                 if (i >= startRow && i <= endRow && j >= startCol && j <= endCol) {
-//                     auto prevIt = prevQTable.find(pos);
-//                     const vector<double> &prevQ = (prevIt != prevQTable.end())
-//                                                       ? prevIt->second
-//                                                       : vector<double>(ACTION_COUNT, 0.0);
-//                     for (int a = 0; a < ACTION_COUNT; a++) {
-//                         maxChange = max(maxChange, fabs(qValues[a] - prevQ[a]));
-//                     }
-//                 }
-//             }
-//
-//             // Check for convergence
-//             if (maxChange < threshold && stableEpisodes >= patience) {
-//                 converged = true;
-//             } else if (maxChange < threshold) {
-//                 stableEpisodes++;
-//             } else {
-//                 stableEpisodes = 0;
-//             }
-//             prevQTable = *node->qTable;
-//         }
-//         counter++;
-//     }
-//
-//     // Clean up Q-table: Remove entries outside subenvironment bounds
-//     auto &qTable = *node->qTable;
-//     for (auto it = qTable.begin(); it != qTable.end();) {
-//         const int x = it->first.first;
-//         const int y = it->first.second;
-//         if (x < startRow || x > endRow || y < startCol || y > endCol) {
-//             it = qTable.erase(it); // Remove out-of-bounds entry
-//         } else {
-//             ++it; // Move to next entry
-//         }
-//     }
-// }
-
-/*************************************************************************/
-unordered_map<pair<int, int>, int, HashPair> getGreedyPolicy(const MazeNode *node) {
-    unordered_map<pair<int, int>, int, HashPair> policy;
-    for (const auto &[pos, qValues]: *node->qTable) {
-        int bestAction = 0;
-        double maxQ = qValues[0];
-        for (int a = 1; a < ACTION_COUNT; ++a) {
-            if (qValues[a] > maxQ) {
-                maxQ = qValues[a];
-                bestAction = a;
-            }
-        }
-        policy[pos] = bestAction;
-    }
-    return policy;
-}
-
-/*************************************************************************/
-void trainAgentWithStoppingCriterion(MazeNode* node, const vector<vector<int>>& maze, const int rows, const int cols,
+void trainAgentWithStoppingCriterion(MazeNode *node, const vector<vector<int> > &maze, const int rows, const int cols,
                                      const int startRow, const int startCol, const int endRow, const int endCol,
                                      double epsilon, const int maxStepsPerEpisode) {
     int arrival = 0, x2, y2, iteration = 0, counter = 0, stableEpisodes = 0;
     double actionReward = 0;
     bool converged = false;
 
-    if (!node->qTable) node->initQTable();
+    // Initialize Q-table if not already done
+    node->initQTable();
 
-    int minEpisodes = 300 + 10 * (endRow - startRow + 1);
-    int maxEpisodes = min(20000, 1000 + 100 * (endRow - startRow + 1));
-    constexpr int patience = 50;
-    constexpr double decayRate = 0.995;
-    auto prevPolicy = getGreedyPolicy(node);
+    // Store previous Q-table state for convergence check
+    auto prevQTable = *node->qTable;
 
+    // Convergence parameters
+    constexpr double threshold = 5e-4;
+    constexpr int patience = 20;
+    constexpr double decayRate = 0.999;
+    constexpr int minEpisodes = 500;
+
+    // Experience replay buffer
     vector<Experience> replayBuffer;
-    constexpr int bufferSize = 500;
+    constexpr int bufferSize = 1000;
     replayBuffer.reserve(bufferSize);
-    constexpr int batchSize = 32;
+    constexpr int batchSize = 64;
 
     // Track starting position success
     unordered_map<pair<int, int>, StartStats, HashPair> startStats;
-    mt19937 rng(random_device{}()); // Better random generator
+    mt19937 rng(random_device{}());
 
-    while (!converged && counter < maxEpisodes) {
+    // Main training loop
+    while (!converged && counter < EPISODE_COUNT) {
         auto [x1, y1] = selectFirstPlace(maze, startRow, startCol, endRow, endCol, counter, minEpisodes, startStats, rng);
-        startStats[{x1, y1}].attempts++;
         iteration = 1;
 
+        // Reset episode
         while (arrival == 0 && iteration < maxStepsPerEpisode) {
-            int act = selectAction(node->getQValues(x1, y1), x1, y1, epsilon, rows, cols, false,
-                                   startRow, startCol, endRow, endCol);
+            // Select action using epsilon-greedy policy and perform it
+            int act = selectAction(node->getQValues(x1, y1), x1, y1, epsilon, rows, cols, false, startRow, startCol,
+                                   endRow, endCol);
             tie(x2, y2, act, actionReward) = performAction(maze, rows, cols, x1, y1, act);
+
+            // Store experience in replay buffer and update Q-table
             replayBuffer.push_back({x1, y1, act, actionReward, x2, y2});
             if (replayBuffer.size() > bufferSize) replayBuffer.erase(replayBuffer.begin());
             updateQTable(node, x1, y1, act, actionReward, x2, y2);
 
-            if (replayBuffer.size() >= batchSize && counter > minEpisodes / 2 && iteration % 10 == 0) {
-                for (int i = 0; i < batchSize; ++i) {
+            // Perform experience replay
+            if (replayBuffer.size() >= batchSize && counter > minEpisodes) {
+                for (int i = 0; i < batchSize; i++) {
                     const int idx = rand() % replayBuffer.size();
-                    const auto& [x1, y1, action, reward, x2, y2] = replayBuffer[idx];
+                    const auto &[x1, y1, action, reward, x2, y2] = replayBuffer[idx];
                     updateQTable(node, x1, y1, action, reward, x2, y2);
                 }
             }
@@ -640,38 +528,48 @@ void trainAgentWithStoppingCriterion(MazeNode* node, const vector<vector<int>>& 
             iteration++;
         }
 
-        if (arrival == 1) startStats[{x1, y1}].successes++;
         arrival = 0;
-        epsilon = max(0.005, epsilon * decayRate);
-        counter++;
+        epsilon = max(0.01, epsilon * decayRate);
 
-        if (counter % 10 == 0 && counter >= minEpisodes) {
-            auto currPolicy = getGreedyPolicy(node);
-            bool policyUnchanged = true;
-            for (const auto& [pos, action] : currPolicy) {
-                if (prevPolicy[pos] != action) {
-                    policyUnchanged = false;
-                    break;
+        // Check for convergence every 50 episodes
+        if (counter % 50 == 0 && counter >= minEpisodes) {
+            double maxChange = 0.0;
+            for (const auto &[pos, qValues]: *node->qTable) {
+                const int i = pos.first;
+                const int j = pos.second;
+                if (i >= startRow && i <= endRow && j >= startCol && j <= endCol) {
+                    auto prevIt = prevQTable.find(pos);
+                    const vector<double> &prevQ = (prevIt != prevQTable.end())
+                                                      ? prevIt->second
+                                                      : vector<double>(ACTION_COUNT, 0.0);
+                    for (int a = 0; a < ACTION_COUNT; a++) {
+                        maxChange = max(maxChange, fabs(qValues[a] - prevQ[a]));
+                    }
                 }
             }
-            if (policyUnchanged) {
+
+            // Check for convergence
+            if (maxChange < threshold && stableEpisodes >= patience) {
+                converged = true;
+            } else if (maxChange < threshold) {
                 stableEpisodes++;
-                if (stableEpisodes >= patience) converged = true;
             } else {
                 stableEpisodes = 0;
-                prevPolicy = currPolicy;
             }
+            prevQTable = *node->qTable;
         }
+        counter++;
     }
 
-    auto& qTable = *node->qTable;
+    // Clean up Q-table: Remove entries outside subenvironment bounds
+    auto &qTable = *node->qTable;
     for (auto it = qTable.begin(); it != qTable.end();) {
         const int x = it->first.first;
         const int y = it->first.second;
         if (x < startRow || x > endRow || y < startCol || y > endCol) {
-            it = qTable.erase(it);
+            it = qTable.erase(it); // Remove out-of-bounds entry
         } else {
-            ++it;
+            ++it; // Move to next entry
         }
     }
 }
@@ -737,7 +635,7 @@ tuple<bool, int, vector<pair<int, int> > > findValidPath(const vector<vector<int
         }
 
         // Select top k actions based on Q-values
-        vector<int> actions = selectTopKActions(node->getQValues(x, y), rows, cols, x, y, 1);
+        vector<int> actions = selectTopKActions(node->getQValues(x, y), rows, cols, x, y, 2);
         for (const int act: actions) {
             int newX = x + moves[act].first;
             int newY = y + moves[act].second;
@@ -800,7 +698,7 @@ tuple<double, double, double> testAgent(const vector<vector<int> > &maze, const 
 
     // Split into chunks and process in parallel
     const size_t totalTasks = positions.size();
-    constexpr size_t chunkSize = 50;
+    constexpr size_t chunkSize = 20;
     vector<future<ThreadResult> > futures;
 
     // Determine the number of threads to use
