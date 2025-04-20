@@ -14,6 +14,7 @@
 #include <iomanip>
 #include <iostream>
 #include <map>
+#include <mutex>
 #include <queue>
 #include <random>
 #include <set>
@@ -499,7 +500,8 @@ void trainAgentWithStoppingCriterion(MazeNode *node, const vector<vector<int> > 
 
     // Main training loop
     while (!converged && counter < EPISODE_COUNT) {
-        auto [x1, y1] = selectFirstPlace(maze, startRow, startCol, endRow, endCol, counter, minEpisodes, startStats, rng);
+        auto [x1, y1] = selectFirstPlace(maze, startRow, startCol, endRow, endCol, counter, minEpisodes, startStats,
+                                         rng);
         iteration = 1;
 
         // Reset episode
@@ -901,7 +903,7 @@ void simulateEnvironmentChanges(const MazeNode *root, const int numSteps, vector
 /*************************************************************************/
 struct Node {
     int x, y, g, h;
-    bool operator>(const Node& other) const { return (g + h) > (other.g + h); }
+    bool operator>(const Node &other) const { return (g + h) > (other.g + h); }
 };
 
 /*************************************************************************/
@@ -911,9 +913,9 @@ int heuristic(const int x1, const int y1, const int x2, const int y2) {
 }
 
 /*************************************************************************/
-vector<pair<int, int>> reconstructPath(unordered_map<pair<int, int>, pair<int, int>, HashPair>& cameFrom,
-                                      const int startX, const int startY, const int goalX, const int goalY) {
-    vector<pair<int, int>> path;
+vector<pair<int, int> > reconstructPath(unordered_map<pair<int, int>, pair<int, int>, HashPair> &cameFrom,
+                                        const int startX, const int startY, const int goalX, const int goalY) {
+    vector<pair<int, int> > path;
     int x = goalX, y = goalY;
     while (!(x == startX && y == startY)) {
         path.emplace_back(x, y);
@@ -924,14 +926,14 @@ vector<pair<int, int>> reconstructPath(unordered_map<pair<int, int>, pair<int, i
     return path;
 }
 
-unordered_map<pair<int, int>, vector<pair<int, int>>, HashPair> computeAllShortestPaths(
-    const vector<vector<int>>& maze) {
+unordered_map<pair<int, int>, vector<pair<int, int> >, HashPair> computeAllShortestPaths(
+    const vector<vector<int> > &maze) {
     const int rows = maze.size();
     const int cols = maze[0].size();
-    vector<pair<int, int>> directions = {
+    vector<pair<int, int> > directions = {
         {-1, 0}, {1, 0}, {0, -1}, {0, 1}, {-1, -1}, {-1, 1}, {1, -1}, {1, 1}
     };
-    unordered_map<pair<int, int>, vector<pair<int, int>>, HashPair> shortestPaths;
+    unordered_map<pair<int, int>, vector<pair<int, int> >, HashPair> shortestPaths;
     unordered_set<pair<int, int>, HashPair> processed; // Tracks positions with assigned paths
 
     // Iterate through all cells in the maze
@@ -941,7 +943,7 @@ unordered_map<pair<int, int>, vector<pair<int, int>>, HashPair> computeAllShorte
                 continue; // Skip obstacles and processed positions
             }
 
-            priority_queue<Node, vector<Node>, greater<>> openSet;
+            priority_queue<Node, vector<Node>, greater<> > openSet;
             unordered_map<pair<int, int>, int, HashPair> gScore;
             unordered_map<pair<int, int>, pair<int, int>, HashPair> cameFrom;
 
@@ -962,7 +964,7 @@ unordered_map<pair<int, int>, vector<pair<int, int>>, HashPair> computeAllShorte
                     break;
                 }
 
-                for (auto [dx, dy] : directions) {
+                for (auto [dx, dy]: directions) {
                     const int newX = current.x + dx;
                     const int newY = current.y + dy;
 
@@ -988,7 +990,7 @@ unordered_map<pair<int, int>, vector<pair<int, int>>, HashPair> computeAllShorte
                         shortestPaths[{px, py}] = {{px, py}}; // Station to itself
                     } else {
                         // Store suffix as shortest path (from px, py to goal)
-                        vector<pair<int, int>> subPath(path.begin() + i, path.end());
+                        vector<pair<int, int> > subPath(path.begin() + i, path.end());
                         auto pos = make_pair(px, py);
                         // Only store if no path exists or new path is shorter
                         if (!shortestPaths.count(pos) || subPath.size() < shortestPaths[pos].size()) {
@@ -1150,28 +1152,244 @@ void collectLeafNodes(MazeNode *node, vector<MazeNode *> &leafNodes) {
 }
 
 /*************************************************************************/
-void trainLeafNodesInParallel(MazeNode *root, const vector<MazeNode *> &leafNodes, double epsilon) {
-    // Use threads to train agents concurrently
-    vector<thread> threads;
+// void trainLeafNodesInParallel(MazeNode *root, const vector<MazeNode *> &leafNodes, double epsilon) {
+//     // Use threads to train agents concurrently
+//     vector<thread> threads;
+//
+//     for (MazeNode *leaf: leafNodes) {
+//         threads.emplace_back([root, leaf, epsilon]() {
+//             // Calculate maxSteps dynamically based on leaf size
+//             const int maxSteps = (leaf->endRow - leaf->startRow + 1) + (leaf->endCol - leaf->startCol + 1);
+//
+//             // Train using root's maze and leaf's qTable
+//             trainAgentWithStoppingCriterion(leaf, *root->maze, leaf->rows, leaf->cols, leaf->startRow, leaf->startCol,
+//                                             leaf->endRow, leaf->endCol, epsilon, maxSteps);
+//
+//             // Propagate the Q-table results upwards
+//             propagateQTableUpwards(leaf);
+//         });
+//     }
+//
+//     // Join threads to ensure all training is complete
+//     for (thread &t: threads) {
+//         if (t.joinable()) {
+//             t.join();
+//         }
+//     }
+// }
 
-    for (MazeNode *leaf: leafNodes) {
+/*************************************************************************/
+std::mutex qTableMutex;
+
+/*************************************************************************/
+void runAgentEpisodes(const MazeNode* node, const std::vector<std::vector<int>>& maze,
+                      const int startRow, const int startCol, const int endRow, const int endCol,
+                      const double epsilon, const int maxStepsPerEpisode, std::mt19937& rng,
+                      std::unordered_map<std::pair<int,int>, std::vector<double>>& localQTable,
+                      std::vector<Experience>& localReplayBuffer, double& maxQChange,
+                      const bool useReplay, const int numEpisodes) {
+    for (int episode = 0; episode < numEpisodes; ++episode) {
+        int arrival = 0, x2, y2, iteration = 1;
+        double actionReward = 0;
+
+        // Random start position
+        auto [x1, y1] = selectFirstPlace(maze, startRow, startCol, endRow, endCol, 0, 0,
+                                         std::unordered_map<std::pair<int,int>, StartStats, HashPair>{}, rng);
+
+        // Episode loop
+        while (arrival == 0 && iteration < maxStepsPerEpisode) {
+            // Select and perform action
+            auto qValues = localQTable.find({x1, y1}) != localQTable.end()
+                           ? localQTable[{x1, y1}]
+                           : std::vector<double>(ACTION_COUNT, 0.0);
+            int act = selectAction(qValues, x1, y1, epsilon, node->rows, node->cols,
+                                   false, startRow, startCol, endRow, endCol);
+            std::tie(x2, y2, act, actionReward) = performAction(maze, node->rows, node->cols, x1, y1, act);
+
+            // Store experience and update local Q-table
+            localReplayBuffer.push_back({x1, y1, act, actionReward, x2, y2});
+            if (localReplayBuffer.size() > 1000) localReplayBuffer.erase(localReplayBuffer.begin());
+
+            // Simplified updateQTable for local Q-table
+            auto& qValuesCurrent = localQTable[{x1, y1}];
+            if (qValuesCurrent.empty()) qValuesCurrent.resize(ACTION_COUNT, 0.0);
+            auto qValuesNext = localQTable.find({x2, y2}) != localQTable.end()
+                               ? localQTable[{x2, y2}]
+                               : std::vector<double>(ACTION_COUNT, 0.0);
+            const double maxNextQ = *std::max_element(qValuesNext.begin(), qValuesNext.end());
+            const double oldQ = qValuesCurrent[act];
+            qValuesCurrent[act] = oldQ + 0.1 * (actionReward + 0.9 * maxNextQ - oldQ);
+            maxQChange = std::max(maxQChange, std::fabs(qValuesCurrent[act] - oldQ));
+
+            // Experience replay
+            if (useReplay && localReplayBuffer.size() >= 64) {
+                for (int i = 0; i < 64; ++i) {
+                    const int idx = rand() % localReplayBuffer.size();
+                    const auto& [x1_r, y1_r, action, reward, x2_r, y2_r] = localReplayBuffer[idx];
+                    auto& qValues_r = localQTable[{x1_r, y1_r}];
+                    if (qValues_r.empty()) qValues_r.resize(ACTION_COUNT, 0.0);
+                    auto qValuesNext_r = localQTable.find({x2_r, y2_r}) != localQTable.end()
+                                         ? localQTable[{x2_r, y2_r}]
+                                         : std::vector<double>(ACTION_COUNT, 0.0);
+                    const double maxNextQ_r = *std::max_element(qValuesNext_r.begin(), qValuesNext_r.end());
+                    const double oldQ_r = qValues_r[action];
+                    qValues_r[action] = oldQ_r + 0.1 * (reward + 0.9 * maxNextQ_r - oldQ_r);
+                }
+            }
+
+            arrival = checkExit(maze, x2, y2);
+            x1 = x2;
+            y1 = y2;
+            iteration++;
+        }
+    }
+}
+
+/*************************************************************************/
+void trainNodeWithMultiAgents(MazeNode* node, const std::vector<std::vector<int>>& maze,
+                              double epsilon, int maxStepsPerEpisode, int numAgents) {
+    node->initQTable();
+    auto prevQTable = *node->qTable;
+
+    // Convergence parameters
+    constexpr double threshold = 5e-4;
+    constexpr int patience = 20;
+    constexpr double decayRate = 0.999;
+    constexpr int minEpisodes = 100;
+    constexpr int episodesPerBatch = 100; // Aggregate every 100 episodes
+    int counter = 0, stableEpisodes = 0;
+    bool converged = false;
+
+    // Agent setup
+    std::vector<std::thread> threads;
+    std::vector<std::mt19937> rngs(numAgents);
+    std::vector<double> maxQChanges(numAgents, 0.0);
+    std::vector<std::unordered_map<std::pair<int,int>, std::vector<double>, HashPair>> localQTables(numAgents);
+    std::vector<std::vector<Experience>> localReplayBuffers(numAgents, std::vector<Experience>());
+    for (auto& buffer : localReplayBuffers) buffer.reserve(1000);
+    for (int i = 0; i < numAgents; ++i) {
+        rngs[i].seed(std::random_device{}() + i);
+    }
+
+    // Main training loop
+    while (!converged && counter < EPISODE_COUNT) {
+        threads.clear();
+        std::fill(maxQChanges.begin(), maxQChanges.end(), 0.0);
+        epsilon = max(0.01, epsilon * decayRate);
+
+        // Spawn agent threads for batch of episodes
+        for (int i = 0; i < numAgents; ++i) {
+            threads.emplace_back(runAgentEpisodes, node, std::ref(maze),
+                                node->startRow, node->startCol, node->endRow, node->endCol,
+                                epsilon, maxStepsPerEpisode, std::ref(rngs[i]),
+                                std::ref(localQTables[i]), std::ref(localReplayBuffers[i]),
+                                std::ref(maxQChanges[i]), counter > minEpisodes, episodesPerBatch);
+        }
+
+        // Join threads
+        for (auto& thread : threads) {
+            thread.join();
+        }
+
+        // Aggregate Q-tables
+        {
+            std::lock_guard<std::mutex> lock(qTableMutex);
+            std::unordered_map<std::pair<int,int>, std::vector<double>, HashPair> newQTable;
+            std::unordered_map<std::pair<int,int>, int, HashPair> stateActionCounts;
+
+            // Collect all state-action pairs
+            for (const auto& localQTable : localQTables) {
+                for (const auto& [pos, qValues] : localQTable) {
+                    auto& newQValues = newQTable[pos];
+                    if (newQValues.empty()) newQValues.resize(ACTION_COUNT, 0.0);
+                    auto& counts = stateActionCounts[pos];
+                    if (counts == 0) counts = 1;
+                    for (int a = 0; a < ACTION_COUNT; ++a) {
+                        newQValues[a] += qValues[a];
+                    }
+                }
+            }
+
+            // Average Q-values
+            for (auto& [pos, qValues] : newQTable) {
+                int count = stateActionCounts[pos];
+                for (int a = 0; a < ACTION_COUNT; ++a) {
+                    qValues[a] /= count;
+                }
+            }
+
+            // Update shared Q-table
+            *node->qTable = std::move(newQTable);
+
+            // Copy shared Q-table back to local Q-tables
+            for (auto& localQTable : localQTables) {
+                localQTable = *node->qTable;
+            }
+        }
+
+        // Check convergence every 50 episodes
+        if (counter % 50 == 0 && counter >= minEpisodes) {
+            double maxChange = 0.0;
+            {
+                std::lock_guard<std::mutex> lock(qTableMutex);
+                for (const auto& [pos, qValues] : *node->qTable) {
+                    int i = pos.first, j = pos.second;
+                    if (i >= node->startRow && i <= node->endRow && j >= node->startCol && j <= node->endCol) {
+                        auto prevIt = prevQTable.find(pos);
+                        const std::vector<double>& prevQ = (prevIt != prevQTable.end())
+                                                           ? prevIt->second
+                                                           : std::vector<double>(ACTION_COUNT, 0.0);
+                        for (int a = 0; a < ACTION_COUNT; ++a) {
+                            maxChange = std::max(maxChange, std::fabs(qValues[a] - prevQ[a]));
+                        }
+                    }
+                }
+                prevQTable = *node->qTable;
+            }
+
+            if (maxChange < threshold && stableEpisodes >= patience) {
+                converged = true;
+            } else if (maxChange < threshold) {
+                stableEpisodes++;
+            } else {
+                stableEpisodes = 0;
+            }
+        }
+
+        counter += episodesPerBatch;
+    }
+
+    // Clean up Q-table
+    {
+        std::lock_guard<std::mutex> lock(qTableMutex);
+        auto& qTable = *node->qTable;
+        for (auto it = qTable.begin(); it != qTable.end();) {
+            int x = it->first.first, y = it->first.second;
+            if (x < node->startRow || x > node->endRow || y < node->startCol || y > node->endCol) {
+                it = qTable.erase(it);
+            } else {
+                ++it;
+            }
+        }
+    }
+}
+
+/*************************************************************************/
+void trainLeafNodesInParallel(MazeNode* root, const std::vector<MazeNode*>& leafNodes, double epsilon) {
+    constexpr int numAgents = 4; // Adjustable
+    std::vector<std::thread> threads;
+
+    for (MazeNode* leaf : leafNodes) {
         threads.emplace_back([root, leaf, epsilon]() {
-            // Calculate maxSteps dynamically based on leaf size
             const int maxSteps = (leaf->endRow - leaf->startRow + 1) + (leaf->endCol - leaf->startCol + 1);
-
-            // Train using root's maze and leaf's qTable
-            trainAgentWithStoppingCriterion(leaf, *root->maze, leaf->rows, leaf->cols, leaf->startRow, leaf->startCol,
-                                            leaf->endRow, leaf->endCol, epsilon, maxSteps);
-
-            // Propagate the Q-table results upwards
+            trainNodeWithMultiAgents(leaf, *root->maze, epsilon, maxSteps, numAgents);
             propagateQTableUpwards(leaf);
         });
     }
 
-    // Join threads to ensure all training is complete
-    for (thread &t: threads) {
-        if (t.joinable()) {
-            t.join();
+    for (auto& thread : threads) {
+        if (thread.joinable()) {
+            thread.join();
         }
     }
 }
