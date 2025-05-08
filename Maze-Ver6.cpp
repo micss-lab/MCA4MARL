@@ -1,8 +1,8 @@
-/****************************************************************************************************/
-/*			This Program has been written by Hossein Yarahmadi					                    */
-/*          The Path Matrix includes three types of entities                                        */
-/*          0: means the obstacle  1:means the feasible moving  2:means the charge station          */
-/****************************************************************************************************/
+/************************************************************************/
+/*          This program has been written by Jonas De Maeyer            */
+/*          The maze includes three types of entities                   */
+/*          0: obstacle  1: free space  2: charging station             */
+/************************************************************************/
 
 #include <algorithm>
 #include <chrono>
@@ -75,6 +75,7 @@ public:
     vector<MazeNode *> children;
     int rows, cols;
     int startRow, startCol, endRow, endCol;
+    int chargingStationCount;
     double baselineSuccessRate = -1.0; // -1 indicates untrained
 
     // Constructor
@@ -87,6 +88,8 @@ public:
             maze = make_unique<vector<vector<int> > >(fullMaze);
             initQTable();
         }
+        // Count charging stations in the subenvironment
+        chargingStationCount = countChargingStations(fullMaze);
     }
 
     // Destructor
@@ -135,6 +138,19 @@ public:
         if (it != qTable->end()) return it->second;
         static vector<double> defaultQ(ACTION_COUNT, 0.0); // Static to avoid reallocation
         return defaultQ;
+    }
+
+    // Create a function to count the number of charging stations in the maze
+    [[nodiscard]] int countChargingStations(const vector<vector<int> > &fullMaze) const {
+        int count = 0;
+        for (int i = startRow; i <= endRow; ++i) {
+            for (int j = startCol; j <= endCol; ++j) {
+                if (fullMaze[i][j] == CHARGING_STATION) {
+                    count++;
+                }
+            }
+        }
+        return count;
     }
 };
 
@@ -614,9 +630,14 @@ struct PathState {
 };
 
 /*************************************************************************/
-tuple<bool, int, vector<pair<int, int> > > findValidPath(const vector<vector<int> > &maze, const MazeNode *node,
-                                                         const int rows, const int cols, const int startX,
-                                                         const int startY, const int maxSteps) {
+tuple<bool, int, vector<pair<int, int> > > findValidPath(const MazeNode *root, const int startX, const int startY,
+                                                         const int maxSteps) {
+    // Extract maze and dimensions from the root node
+    const vector<vector<int> > &maze = *root->maze;
+    const int rows = root->rows;
+    const int cols = root->cols;
+
+    // Define possible moves
     const vector<pair<int, int> > moves = {{-1, 0}, {-1, 1}, {0, 1}, {1, 1}, {1, 0}, {1, -1}, {0, -1}, {-1, -1}};
     queue<PathState> toExplore;
     set<pair<int, int> > visited;
@@ -637,7 +658,7 @@ tuple<bool, int, vector<pair<int, int> > > findValidPath(const vector<vector<int
         }
 
         // Select top k actions based on Q-values
-        vector<int> actions = selectTopKActions(node->getQValues(x, y), rows, cols, x, y, 2);
+        vector<int> actions = selectTopKActions(root->getQValues(x, y), rows, cols, x, y, 2);
         for (const int act: actions) {
             int newX = x + moves[act].first;
             int newY = y + moves[act].second;
@@ -662,8 +683,11 @@ struct ThreadResult {
 };
 
 /*************************************************************************/
-tuple<double, double, double> testAgent(const vector<vector<int> > &maze, const MazeNode *node, const int rows,
-                                        const int cols) {
+tuple<double, double, double> testAgent(const MazeNode *root) {
+    // Extract maze and dimensions from the root node
+    const vector<vector<int> > &maze = *root->maze;
+    const int rows = root->rows;
+    const int cols = root->cols;
     const int maxStepsPerEpisode = rows + cols;
 
     // Collect all valid positions to test
@@ -686,7 +710,7 @@ tuple<double, double, double> testAgent(const vector<vector<int> > &maze, const 
             const int y1 = positions[i].second;
 
             auto start = chrono::high_resolution_clock::now();
-            auto [success, steps, path] = findValidPath(maze, node, rows, cols, x1, y1, maxStepsPerEpisode);
+            auto [success, steps, path] = findValidPath(root, x1, y1, maxStepsPerEpisode);
             auto end = chrono::high_resolution_clock::now();
 
             result.planningTime += chrono::duration<double>(end - start).count();
@@ -776,22 +800,23 @@ void propagateQTableDownwards(MazeNode *node) {
 
     // DFS to propagate Q-tables
     while (!toVisit.empty()) {
-        MazeNode *current = toVisit.top();
+        const MazeNode *current = toVisit.top();
         toVisit.pop();
 
         for (MazeNode *child: current->children) {
-            if (child->qTable) {
-                // Update only if qTable exists
-                // Copy Q-values for positions within child's subenvironment
-                for (int i = child->startRow; i <= child->endRow; ++i) {
-                    for (int j = child->startCol; j <= child->endCol; ++j) {
-                        auto &childQ = (*child->qTable)[{i, j}]; // Access or create child's Q-values
-                        const auto &currentQ = (*current->qTable)[{i, j}]; // Access current node's Q-values
-                        if (childQ.empty()) {
-                            childQ.resize(ACTION_COUNT, 0.0); // Initialize if not present
-                        }
-                        childQ = currentQ; // Copy all action Q-values
+            // If child has no qTable, initialize it
+            if (!child->qTable) {
+                child->initQTable();
+            }
+            // Copy Q-values for positions within child's subenvironment
+            for (int i = child->startRow; i <= child->endRow; ++i) {
+                for (int j = child->startCol; j <= child->endCol; ++j) {
+                    auto &childQ = (*child->qTable)[{i, j}]; // Access or create child's Q-values
+                    const auto &currentQ = (*node->qTable)[{i, j}]; // Access current node's Q-values
+                    if (childQ.empty()) {
+                        childQ.resize(ACTION_COUNT, 0.0); // Initialize if not present
                     }
+                    childQ = currentQ; // Copy all action Q-values
                 }
             }
             toVisit.push(child); // Continue to child regardless of qTable
@@ -1152,343 +1177,9 @@ void collectLeafNodes(MazeNode *node, vector<MazeNode *> &leafNodes) {
 }
 
 /*************************************************************************/
-// void trainLeafNodesInParallel(MazeNode *root, const vector<MazeNode *> &leafNodes, double epsilon) {
-//     // Use threads to train agents concurrently
-//     vector<thread> threads;
-//
-//     for (MazeNode *leaf: leafNodes) {
-//         threads.emplace_back([root, leaf, epsilon]() {
-//             // Calculate maxSteps dynamically based on leaf size
-//             const int maxSteps = (leaf->endRow - leaf->startRow + 1) + (leaf->endCol - leaf->startCol + 1);
-//
-//             // Train using root's maze and leaf's qTable
-//             trainAgentWithStoppingCriterion(leaf, *root->maze, leaf->rows, leaf->cols, leaf->startRow, leaf->startCol,
-//                                             leaf->endRow, leaf->endCol, epsilon, maxSteps);
-//
-//             // Propagate the Q-table results upwards
-//             propagateQTableUpwards(leaf);
-//         });
-//     }
-//
-//     // Join threads to ensure all training is complete
-//     for (thread &t: threads) {
-//         if (t.joinable()) {
-//             t.join();
-//         }
-//     }
-// }
-
-/*************************************************************************/
-std::mutex qTableMutex;
-
-/*************************************************************************/
-void runAgentEpisodes(const MazeNode* node, const std::vector<std::vector<int>>& maze,
-                      const int startRow, const int startCol, const int endRow, const int endCol,
-                      const double epsilon, const int maxStepsPerEpisode, std::mt19937& rng,
-                      std::unordered_map<std::pair<int,int>, std::vector<double>>& localQTable,
-                      std::vector<Experience>& localReplayBuffer, double& maxQChange,
-                      const bool useReplay, const int numEpisodes) {
-    for (int episode = 0; episode < numEpisodes; ++episode) {
-        int arrival = 0, x2, y2, iteration = 1;
-        double actionReward = 0;
-
-        // Random start position
-        auto [x1, y1] = selectFirstPlace(maze, startRow, startCol, endRow, endCol, 0, 0,
-                                         std::unordered_map<std::pair<int,int>, StartStats, HashPair>{}, rng);
-
-        // Episode loop
-        while (arrival == 0 && iteration < maxStepsPerEpisode) {
-            // Select and perform action
-            auto qValues = localQTable.find({x1, y1}) != localQTable.end()
-                           ? localQTable[{x1, y1}]
-                           : std::vector<double>(ACTION_COUNT, 0.0);
-            int act = selectAction(qValues, x1, y1, epsilon, node->rows, node->cols,
-                                   false, startRow, startCol, endRow, endCol);
-            std::tie(x2, y2, act, actionReward) = performAction(maze, node->rows, node->cols, x1, y1, act);
-
-            // Store experience and update local Q-table
-            localReplayBuffer.push_back({x1, y1, act, actionReward, x2, y2});
-            if (localReplayBuffer.size() > 1000) localReplayBuffer.erase(localReplayBuffer.begin());
-
-            // Simplified updateQTable for local Q-table
-            auto& qValuesCurrent = localQTable[{x1, y1}];
-            if (qValuesCurrent.empty()) qValuesCurrent.resize(ACTION_COUNT, 0.0);
-            auto qValuesNext = localQTable.find({x2, y2}) != localQTable.end()
-                               ? localQTable[{x2, y2}]
-                               : std::vector<double>(ACTION_COUNT, 0.0);
-            const double maxNextQ = *std::max_element(qValuesNext.begin(), qValuesNext.end());
-            const double oldQ = qValuesCurrent[act];
-            qValuesCurrent[act] = oldQ + 0.1 * (actionReward + 0.9 * maxNextQ - oldQ);
-            maxQChange = std::max(maxQChange, std::fabs(qValuesCurrent[act] - oldQ));
-
-            // Experience replay
-            if (useReplay && localReplayBuffer.size() >= 64) {
-                for (int i = 0; i < 64; ++i) {
-                    const int idx = rand() % localReplayBuffer.size();
-                    const auto& [x1_r, y1_r, action, reward, x2_r, y2_r] = localReplayBuffer[idx];
-                    auto& qValues_r = localQTable[{x1_r, y1_r}];
-                    if (qValues_r.empty()) qValues_r.resize(ACTION_COUNT, 0.0);
-                    auto qValuesNext_r = localQTable.find({x2_r, y2_r}) != localQTable.end()
-                                         ? localQTable[{x2_r, y2_r}]
-                                         : std::vector<double>(ACTION_COUNT, 0.0);
-                    const double maxNextQ_r = *std::max_element(qValuesNext_r.begin(), qValuesNext_r.end());
-                    const double oldQ_r = qValues_r[action];
-                    qValues_r[action] = oldQ_r + 0.1 * (reward + 0.9 * maxNextQ_r - oldQ_r);
-                }
-            }
-
-            arrival = checkExit(maze, x2, y2);
-            x1 = x2;
-            y1 = y2;
-            iteration++;
-        }
-    }
-}
-
-/*************************************************************************/
-void trainNodeWithMultiAgents(MazeNode* node, const std::vector<std::vector<int>>& maze,
-                              double epsilon, int maxStepsPerEpisode, int numAgents) {
-    node->initQTable();
-    auto prevQTable = *node->qTable;
-
-    // Convergence parameters
-    constexpr double threshold = 5e-4;
-    constexpr int patience = 20;
-    constexpr double decayRate = 0.999;
-    constexpr int minEpisodes = 100;
-    constexpr int episodesPerBatch = 100; // Aggregate every 100 episodes
-    int counter = 0, stableEpisodes = 0;
-    bool converged = false;
-
-    // Agent setup
-    std::vector<std::thread> threads;
-    std::vector<std::mt19937> rngs(numAgents);
-    std::vector<double> maxQChanges(numAgents, 0.0);
-    std::vector<std::unordered_map<std::pair<int,int>, std::vector<double>, HashPair>> localQTables(numAgents);
-    std::vector<std::vector<Experience>> localReplayBuffers(numAgents, std::vector<Experience>());
-    for (auto& buffer : localReplayBuffers) buffer.reserve(1000);
-    for (int i = 0; i < numAgents; ++i) {
-        rngs[i].seed(std::random_device{}() + i);
-    }
-
-    // Main training loop
-    while (!converged && counter < EPISODE_COUNT) {
-        threads.clear();
-        std::fill(maxQChanges.begin(), maxQChanges.end(), 0.0);
-        epsilon = max(0.01, epsilon * decayRate);
-
-        // Spawn agent threads for batch of episodes
-        for (int i = 0; i < numAgents; ++i) {
-            threads.emplace_back(runAgentEpisodes, node, std::ref(maze),
-                                node->startRow, node->startCol, node->endRow, node->endCol,
-                                epsilon, maxStepsPerEpisode, std::ref(rngs[i]),
-                                std::ref(localQTables[i]), std::ref(localReplayBuffers[i]),
-                                std::ref(maxQChanges[i]), counter > minEpisodes, episodesPerBatch);
-        }
-
-        // Join threads
-        for (auto& thread : threads) {
-            thread.join();
-        }
-
-        // Aggregate Q-tables
-        {
-            std::lock_guard<std::mutex> lock(qTableMutex);
-            std::unordered_map<std::pair<int,int>, std::vector<double>, HashPair> newQTable;
-            std::unordered_map<std::pair<int,int>, int, HashPair> stateActionCounts;
-
-            // Collect all state-action pairs
-            for (const auto& localQTable : localQTables) {
-                for (const auto& [pos, qValues] : localQTable) {
-                    auto& newQValues = newQTable[pos];
-                    if (newQValues.empty()) newQValues.resize(ACTION_COUNT, 0.0);
-                    auto& counts = stateActionCounts[pos];
-                    if (counts == 0) counts = 1;
-                    for (int a = 0; a < ACTION_COUNT; ++a) {
-                        newQValues[a] += qValues[a];
-                    }
-                }
-            }
-
-            // Average Q-values
-            for (auto& [pos, qValues] : newQTable) {
-                int count = stateActionCounts[pos];
-                for (int a = 0; a < ACTION_COUNT; ++a) {
-                    qValues[a] /= count;
-                }
-            }
-
-            // Update shared Q-table
-            *node->qTable = std::move(newQTable);
-
-            // Copy shared Q-table back to local Q-tables
-            for (auto& localQTable : localQTables) {
-                localQTable = *node->qTable;
-            }
-        }
-
-        // Check convergence every 50 episodes
-        if (counter % 50 == 0 && counter >= minEpisodes) {
-            double maxChange = 0.0;
-            {
-                std::lock_guard<std::mutex> lock(qTableMutex);
-                for (const auto& [pos, qValues] : *node->qTable) {
-                    int i = pos.first, j = pos.second;
-                    if (i >= node->startRow && i <= node->endRow && j >= node->startCol && j <= node->endCol) {
-                        auto prevIt = prevQTable.find(pos);
-                        const std::vector<double>& prevQ = (prevIt != prevQTable.end())
-                                                           ? prevIt->second
-                                                           : std::vector<double>(ACTION_COUNT, 0.0);
-                        for (int a = 0; a < ACTION_COUNT; ++a) {
-                            maxChange = std::max(maxChange, std::fabs(qValues[a] - prevQ[a]));
-                        }
-                    }
-                }
-                prevQTable = *node->qTable;
-            }
-
-            if (maxChange < threshold && stableEpisodes >= patience) {
-                converged = true;
-            } else if (maxChange < threshold) {
-                stableEpisodes++;
-            } else {
-                stableEpisodes = 0;
-            }
-        }
-
-        counter += episodesPerBatch;
-    }
-
-    // Clean up Q-table
-    {
-        std::lock_guard<std::mutex> lock(qTableMutex);
-        auto& qTable = *node->qTable;
-        for (auto it = qTable.begin(); it != qTable.end();) {
-            int x = it->first.first, y = it->first.second;
-            if (x < node->startRow || x > node->endRow || y < node->startCol || y > node->endCol) {
-                it = qTable.erase(it);
-            } else {
-                ++it;
-            }
-        }
-    }
-}
-
-/*************************************************************************/
-void trainLeafNodesInParallel(MazeNode* root, const std::vector<MazeNode*>& leafNodes, double epsilon) {
-    constexpr int numAgents = 4; // Adjustable
-    std::vector<std::thread> threads;
-
-    for (MazeNode* leaf : leafNodes) {
-        threads.emplace_back([root, leaf, epsilon]() {
-            const int maxSteps = (leaf->endRow - leaf->startRow + 1) + (leaf->endCol - leaf->startCol + 1);
-            trainNodeWithMultiAgents(leaf, *root->maze, epsilon, maxSteps, numAgents);
-            propagateQTableUpwards(leaf);
-        });
-    }
-
-    for (auto& thread : threads) {
-        if (thread.joinable()) {
-            thread.join();
-        }
-    }
-}
-
-/*************************************************************************/
-void trainLeafNodesSequentially(const MazeNode *root, const vector<MazeNode *> &leafNodes, const double epsilon) {
-    for (MazeNode *leaf: leafNodes) {
-        // Calculate maxSteps dynamically based on leaf size
-        const int maxSteps = (leaf->endRow - leaf->startRow + 1) + (leaf->endCol - leaf->startCol + 1);
-
-        // Train using root's maze and leaf's qTable
-        trainAgentWithStoppingCriterion(leaf, *root->maze, leaf->rows, leaf->cols, leaf->startRow,
-                                        leaf->startCol, leaf->endRow, leaf->endCol, epsilon, maxSteps);
-
-        // Propagate the Q-table results upwards
-        propagateQTableUpwards(leaf);
-    }
-}
-
-/*************************************************************************/
-void applyLocalPathPlanning(MazeNode *root, const vector<MazeNode *> &changedLeaves = {}) {
-    // Environment is static. Performing global path planning selectively
-    if (changedLeaves.empty()) {
-        // Train all leaf nodes initially
-        vector<MazeNode *> leafNodes;
-        collectLeafNodes(root, leafNodes);
-        trainLeafNodesInParallel(root, leafNodes, 1.0);
-    }
-    // Environment changed. Training affected leaf nodes
-    else {
-        trainLeafNodesInParallel(root, changedLeaves, 1.0);
-    }
-}
-
-/*************************************************************************/
-void trainHierarchy(MazeNode *root, const vector<MazeNode *> &changedLeaves = {}, const int maxLevelsToTrain = 1) {
-    if (!root) return;
-    const bool isInitialTraining = changedLeaves.empty();
-
-    // Collect leaf nodes to train
-    vector<MazeNode *> leafNodesToTrain;
-    if (isInitialTraining) {
-        collectLeafNodes(root, leafNodesToTrain);
-    } else {
-        // Use the provided list of affected leaf nodes directly
-        leafNodesToTrain = changedLeaves;
-    }
-
-    // Train all affected or initial leaf nodes
-    trainLeafNodesInParallel(root, leafNodesToTrain, 1.0);
-
-    // Decision mechanism: Count affected children per parent
-    unordered_map<MazeNode *, int> parentAffectedCount; // Parent -> # of affected children
-    for (const MazeNode *leaf: leafNodesToTrain) {
-        if (leaf->parent) {
-            parentAffectedCount[leaf->parent]++;
-        }
-    }
-
-    // Select parents to retrain: >= 1 affected child
-    vector<MazeNode *> parentsToTrain;
-    for (const auto &[parent, affectedCount]: parentAffectedCount) {
-        if (affectedCount >= 1) {
-            // Retrain if 1 or more of 4 children are affected
-            parentsToTrain.push_back(parent);
-        }
-    }
-
-    // Train parents hierarchically up to maxLevelsToTrain
-    int levelsTrained = 0;
-    unordered_set<MazeNode *> currentLevelNodes(parentsToTrain.begin(), parentsToTrain.end());
-    while (!currentLevelNodes.empty() && levelsTrained < maxLevelsToTrain) {
-        vector<MazeNode *> nodesToTrain(currentLevelNodes.begin(), currentLevelNodes.end());
-        trainLeafNodesInParallel(root, nodesToTrain, 1.0);
-
-        // Prepare next level with the same decision rule
-        unordered_map<MazeNode *, int> nextLevelAffectedCount;
-        for (const MazeNode *node: nodesToTrain) {
-            if (node->parent) {
-                nextLevelAffectedCount[node->parent]++;
-            }
-        }
-
-        // Select parents for the next level
-        unordered_set<MazeNode *> nextLevelNodes;
-        for (const auto &[parent, affectedCount]: nextLevelAffectedCount) {
-            if (affectedCount >= 1) {
-                // Apply same rule for higher levels
-                nextLevelNodes.insert(parent);
-            }
-        }
-        currentLevelNodes = move(nextLevelNodes);
-        levelsTrained++;
-    }
-}
-
-/*************************************************************************/
-double computeLeafSuccessRate(const MazeNode *root, const MazeNode *node) {
-    if (!root || !node || !root->maze || !node->qTable) return 0.0; // Safety checks
+double computeNodeSuccessRate(const MazeNode *root, const MazeNode *node) {
+    if (!root || !node || !root->maze || !root->qTable)
+        return 0.0; // Safety checks
 
     // Get the sub-environment bounds from the node
     const int startRow = node->startRow;
@@ -1512,7 +1203,7 @@ double computeLeafSuccessRate(const MazeNode *root, const MazeNode *node) {
             totalPositions++;
 
             // Try to find a valid path from this position
-            auto [success, steps, path] = findValidPath(maze, node, rows, cols, x, y, maxSteps);
+            auto [success, steps, path] = findValidPath(root, x, y, maxSteps);
             if (success) {
                 successfulPaths++;
             }
@@ -1524,15 +1215,369 @@ double computeLeafSuccessRate(const MazeNode *root, const MazeNode *node) {
 }
 
 /*************************************************************************/
-double getRetrainingThreshold(const int mazeSize) {
-    return 0.01;
+void trainNodesInParallel(MazeNode *root, const vector<MazeNode *> &nodes, double epsilon) {
+    // Use threads to train agents concurrently
+    vector<thread> threads;
+
+    for (MazeNode *node: nodes) {
+        threads.emplace_back([root, node, epsilon]() {
+            // Calculate maxSteps dynamically based on leaf size
+            const int maxSteps = (node->endRow - node->startRow + 1) + (node->endCol - node->startCol + 1);
+
+            // Train using root's maze and leaf's qTable
+            trainAgentWithStoppingCriterion(node, *root->maze, node->rows, node->cols, node->startRow, node->startCol,
+                                            node->endRow, node->endCol, epsilon, maxSteps);
+
+            // Propagate the Q-table results upwards
+            propagateQTableUpwards(node);
+            propagateQTableDownwards(node);
+        });
+    }
+
+    // Join threads to ensure all training is complete
+    for (thread &t: threads) {
+        if (t.joinable()) {
+            t.join();
+        }
+    }
+
+    // Recompute success rates for retrained nodes and their descendants
+    unordered_set<MazeNode *> visited; // Track nodes to avoid recomputing shared descendants
+    for (MazeNode *node: nodes) {
+        if (visited.find(node) != visited.end()) continue; // Skip if already processed
+
+        // DFS to recompute success rates for node and descendants
+        stack<MazeNode *> toVisit;
+        toVisit.push(node);
+
+        while (!toVisit.empty()) {
+            MazeNode *current = toVisit.top();
+            toVisit.pop();
+
+            // Skip if already visited
+            if (visited.find(current) != visited.end()) continue;
+            visited.insert(current);
+
+            // Recompute success rate if node has a qTable or was trained
+            if (current->qTable) {
+                const double newSuccessRate = computeNodeSuccessRate(root, current);
+                current->baselineSuccessRate = newSuccessRate;
+            }
+
+            // Add children to visit
+            for (MazeNode *child: current->children) {
+                toVisit.push(child);
+            }
+        }
+    }
 }
+
+/*************************************************************************/
+void runAgentEpisodes(const MazeNode *node, const vector<vector<int> > &maze, const int startRow, const int startCol,
+                      const int endRow, const int endCol, const double epsilon, const int maxStepsPerEpisode,
+                      mt19937 &rng, unordered_map<pair<int, int>, vector<double>, HashPair> &localQTable,
+                      vector<Experience> &localReplayBuffer, const bool useReplay, const int numEpisodes) {
+    // Generate the episodes
+    for (int episode = 0; episode < numEpisodes; ++episode) {
+        int arrival = 0, x2, y2, iteration = 1;
+        double actionReward = 0;
+
+        // Random start position
+        auto [x1, y1] = selectFirstPlace(maze, startRow, startCol, endRow, endCol, 0, 0,
+                                         unordered_map<pair<int, int>, StartStats, HashPair>{}, rng);
+
+        // Episode loop
+        while (arrival == 0 && iteration < maxStepsPerEpisode) {
+            // Select and perform action
+            auto qValues = localQTable.find({x1, y1}) != localQTable.end()
+                               ? localQTable[{x1, y1}]
+                               : vector<double>(ACTION_COUNT, 0.0);
+            int act = selectAction(qValues, x1, y1, epsilon, node->rows, node->cols, false, startRow, startCol, endRow,
+                                   endCol);
+            tie(x2, y2, act, actionReward) = performAction(maze, node->rows, node->cols, x1, y1, act);
+
+            // Store experience and update local Q-table
+            localReplayBuffer.push_back({x1, y1, act, actionReward, x2, y2});
+            if (localReplayBuffer.size() > 1000) localReplayBuffer.erase(localReplayBuffer.begin());
+
+            // Simplified updateQTable for local Q-table
+            auto &qValuesCurrent = localQTable[{x1, y1}];
+            if (qValuesCurrent.empty()) qValuesCurrent.resize(ACTION_COUNT, 0.0);
+            auto qValuesNext = localQTable.find({x2, y2}) != localQTable.end()
+                                   ? localQTable[{x2, y2}]
+                                   : vector<double>(ACTION_COUNT, 0.0);
+            const double maxNextQ = *max_element(qValuesNext.begin(), qValuesNext.end());
+            const double oldQ = qValuesCurrent[act];
+            qValuesCurrent[act] = oldQ + LEARNING_RATE * (actionReward + DISCOUNT_FACTOR * maxNextQ - oldQ);
+
+            // Experience replay
+            if (useReplay && localReplayBuffer.size() >= 64) {
+                for (int i = 0; i < 64; ++i) {
+                    const int idx = rand() % localReplayBuffer.size();
+                    const auto &[x1_r, y1_r, action, reward, x2_r, y2_r] = localReplayBuffer[idx];
+                    auto &qValues_r = localQTable[{x1_r, y1_r}];
+                    if (qValues_r.empty()) qValues_r.resize(ACTION_COUNT, 0.0);
+                    auto qValuesNext_r = localQTable.find({x2_r, y2_r}) != localQTable.end()
+                                             ? localQTable[{x2_r, y2_r}]
+                                             : vector<double>(ACTION_COUNT, 0.0);
+                    const double maxNextQ_r = *max_element(qValuesNext_r.begin(), qValuesNext_r.end());
+                    const double oldQ_r = qValues_r[action];
+                    qValues_r[action] = oldQ_r + LEARNING_RATE * (reward + DISCOUNT_FACTOR * maxNextQ_r - oldQ_r);
+                }
+            }
+
+            arrival = checkExit(maze, x2, y2);
+            x1 = x2;
+            y1 = y2;
+            iteration++;
+        }
+    }
+
+    // Remove Q-values for positions outside the node's subenvironment
+    for (auto it = localQTable.begin(); it != localQTable.end();) {
+        const int x = it->first.first;
+        const int y = it->first.second;
+        if (x < startRow || x > endRow || y < startCol || y > endCol) {
+            it = localQTable.erase(it);
+        } else {
+            ++it;
+        }
+    }
+}
+
+/*************************************************************************/
+void trainNodeWithMultiAgents(const MazeNode *root, MazeNode *node, const vector<vector<int> > &maze, double epsilon,
+                              const int maxStepsPerEpisode, const int numAgents) {
+    node->initQTable();
+    auto prevQTable = *node->qTable;
+
+    // Convergence parameters
+    constexpr double successThreshold = 0.99; // 99% success rate
+    constexpr double stabilityMargin = 0.01; // Allow 1% deviation from best success
+    constexpr int patience = 5; // Wait 5 batches for stability
+    constexpr double decayRate = 0.95; // Epsilon decay per batch
+    constexpr int episodesPerBatch = 50; // Aggregate every 50 episodes
+    int counter = 0, stableEpisodes = 0;
+    bool converged = false;
+    double bestSuccessRate = 0.0; // Track best success rate seen
+
+    // Agent setup
+    vector<thread> threads;
+    vector<mt19937> rngs(numAgents);
+    vector<unordered_map<pair<int, int>, vector<double>, HashPair> > localQTables(numAgents);
+    for (auto &qTable: localQTables) {
+        qTable = *node->qTable; // Initialize local Q-tables with shared Q-table
+    }
+    vector<vector<Experience> > localReplayBuffers(numAgents, vector<Experience>());
+    for (auto &buffer: localReplayBuffers) {
+        buffer.reserve(1000);
+    }
+    for (int i = 0; i < numAgents; ++i) {
+        rngs[i].seed(random_device{}() + i);
+    }
+
+    // Main training loop
+    while (!converged && counter < 1000) {
+        threads.clear();
+
+        // Spawn agent threads for batch of episodes
+        for (int i = 0; i < numAgents; ++i) {
+            threads.emplace_back(runAgentEpisodes, node, ref(maze), node->startRow, node->startCol, node->endRow,
+                                 node->endCol, epsilon, maxStepsPerEpisode, ref(rngs[i]), ref(localQTables[i]),
+                                 ref(localReplayBuffers[i]), true, episodesPerBatch);
+        }
+
+        // Join threads
+        for (auto &thread: threads) {
+            if (thread.joinable())
+                thread.join();
+        }
+
+        unordered_map<pair<int, int>, vector<double>, HashPair> newQTable;
+        unordered_map<pair<int, int>, int, HashPair> stateActionCounts;
+
+        // Pre-populate with subenvironment positions
+        for (int r = node->startRow; r <= node->endRow; ++r) {
+            for (int c = node->startCol; c <= node->endCol; ++c) {
+                newQTable[{r, c}] = vector<double>(ACTION_COUNT, 0.0);
+                stateActionCounts[{r, c}] = 0;
+            }
+        }
+
+        // Collect all state-action pairs
+        for (const auto &localQTable: localQTables) {
+            for (const auto &[pos, qValues]: localQTable) {
+                auto &newQValues = newQTable[pos];
+                auto &counts = stateActionCounts[pos];
+                counts++;
+                for (int a = 0; a < ACTION_COUNT; ++a) {
+                    newQValues[a] += qValues[a];
+                }
+            }
+        }
+
+        // Average Q-values
+        for (auto &[pos, qValues]: newQTable) {
+            if (stateActionCounts[pos] == 0) continue; // Skip if no actions taken
+            for (int a = 0; a < ACTION_COUNT; ++a) {
+                qValues[a] /= stateActionCounts[pos];
+            }
+        }
+
+        // Update shared Q-table
+        *node->qTable = move(newQTable);
+
+        // Copy shared Q-table back to local Q-tables
+        for (auto &localQTable: localQTables) {
+            localQTable = *node->qTable;
+        }
+
+        // Compute success rate
+        const double successRate = computeNodeSuccessRate(root, node);
+        bestSuccessRate = max(bestSuccessRate, successRate);
+
+        // Check for convergence
+        if (successRate >= successThreshold ||
+            fabs(successRate - bestSuccessRate) <= stabilityMargin) {
+            stableEpisodes++;
+            if (stableEpisodes >= patience) {
+                converged = true;
+            }
+        } else {
+            stableEpisodes = 0;
+        }
+
+        // Update epsilon and counter
+        epsilon = max(0.01, epsilon * decayRate);
+        prevQTable = *node->qTable;
+        counter += episodesPerBatch;
+    }
+}
+
+/*************************************************************************/
+void trainNodesInParallelMultiAgents(MazeNode *root, const vector<MazeNode *> &nodes, double epsilon) {
+    constexpr int numAgents = 4; // Adjustable
+    vector<thread> threads;
+
+    for (MazeNode *node: nodes) {
+        threads.emplace_back([root, node, epsilon]() {
+            const int maxSteps = (node->endRow - node->startRow + 1) + (node->endCol - node->startCol + 1);
+            trainNodeWithMultiAgents(root, node, *root->maze, epsilon, maxSteps, numAgents);
+            propagateQTableUpwards(node);
+            propagateQTableDownwards(node);
+        });
+    }
+
+    for (auto &thread: threads) {
+        if (thread.joinable()) {
+            thread.join();
+        }
+    }
+
+    // TODO: Recompute success rates for retrained nodes and their descendants
+}
+
+/*************************************************************************/
+void trainNodesSequentially(const MazeNode *root, const vector<MazeNode *> &nodes, const double epsilon) {
+    for (MazeNode *node: nodes) {
+        // Calculate maxSteps dynamically based on leaf size
+        const int maxSteps = (node->endRow - node->startRow + 1) + (node->endCol - node->startCol + 1);
+
+        // Train using root's maze and leaf's qTable
+        trainAgentWithStoppingCriterion(node, *root->maze, node->rows, node->cols, node->startRow,
+                                        node->startCol, node->endRow, node->endCol, epsilon, maxSteps);
+
+        // Propagate the Q-table results upwards
+        propagateQTableUpwards(node);
+        propagateQTableDownwards(node);
+    }
+}
+
+/*************************************************************************/
+void applyLocalPathPlanning(MazeNode *root, const vector<MazeNode *> &changedLeaves = {}) {
+    // Environment is static. Performing global path planning selectively
+    if (changedLeaves.empty()) {
+        // Train all leaf nodes initially
+        vector<MazeNode *> leafNodes;
+        collectLeafNodes(root, leafNodes);
+        trainNodesInParallel(root, leafNodes, 1.0);
+    }
+    // Environment changed. Training affected leaf nodes
+    else {
+        trainNodesInParallel(root, changedLeaves, 1.0);
+    }
+}
+
+/*************************************************************************/
+void trainHierarchy(MazeNode *root, const vector<MazeNode *> &changedLeaves = {}, const int maxLevelsToTrain = 1) {
+    if (!root) return;
+    const bool isInitialTraining = changedLeaves.empty();
+
+    // Collect leaf nodes to train
+    vector<MazeNode *> leafNodesToTrain;
+    if (isInitialTraining) {
+        collectLeafNodes(root, leafNodesToTrain);
+    } else {
+        // Use the provided list of affected leaf nodes directly
+        leafNodesToTrain = changedLeaves;
+    }
+
+    // Train all affected or initial leaf nodes
+    trainNodesInParallel(root, leafNodesToTrain, 1.0);
+
+    // Decision mechanism: Count affected children per parent
+    unordered_map<MazeNode *, int> parentAffectedCount; // Parent -> # of affected children
+    for (const MazeNode *leaf: leafNodesToTrain) {
+        if (leaf->parent) {
+            parentAffectedCount[leaf->parent]++;
+        }
+    }
+
+    // Select parents to retrain: >= 1 affected child
+    vector<MazeNode *> parentsToTrain;
+    for (const auto &[parent, affectedCount]: parentAffectedCount) {
+        if (affectedCount >= 1) {
+            // Retrain if 1 or more of 4 children are affected
+            parentsToTrain.push_back(parent);
+        }
+    }
+
+    // Train parents hierarchically up to maxLevelsToTrain
+    int levelsTrained = 0;
+    unordered_set<MazeNode *> currentLevelNodes(parentsToTrain.begin(), parentsToTrain.end());
+    while (!currentLevelNodes.empty() && levelsTrained < maxLevelsToTrain) {
+        vector<MazeNode *> nodesToTrain(currentLevelNodes.begin(), currentLevelNodes.end());
+        trainNodesInParallel(root, nodesToTrain, 1.0);
+
+        // Prepare next level with the same decision rule
+        unordered_map<MazeNode *, int> nextLevelAffectedCount;
+        for (const MazeNode *node: nodesToTrain) {
+            if (node->parent) {
+                nextLevelAffectedCount[node->parent]++;
+            }
+        }
+
+        // Select parents for the next level
+        unordered_set<MazeNode *> nextLevelNodes;
+        for (const auto &[parent, affectedCount]: nextLevelAffectedCount) {
+            if (affectedCount >= 1) {
+                // Apply same rule for higher levels
+                nextLevelNodes.insert(parent);
+            }
+        }
+        currentLevelNodes = move(nextLevelNodes);
+        levelsTrained++;
+    }
+}
+
+/*************************************************************************/
+double getRetrainingThreshold(const int mazeSize) { return 0.02; }
 
 /*************************************************************************/
 void trainHierarchySmart(MazeNode *root, const vector<MazeNode *> &changedLeaves = {}) {
     if (!root) return; // Safety check: Exit if root is null
 
-    // Determine if this is the initial training call (no changes provided)
+    // Determine initial training
     const bool isInitialTraining = changedLeaves.empty();
 
     // Step 1: Collect leaf nodes to train
@@ -1556,44 +1601,38 @@ void trainHierarchySmart(MazeNode *root, const vector<MazeNode *> &changedLeaves
             if (leaf->baselineSuccessRate >= 0) {
                 // Only process leaves that were previously trained
                 const double baseline = leaf->baselineSuccessRate; // Get the stored success rate
-                const double newSuccessRate = computeLeafSuccessRate(root, leaf);
-                // Compute current success using findValidPath
-                if (baseline - newSuccessRate > getRetrainingThreshold(root->rows)) {
+                const double newSuccessRate = computeNodeSuccessRate(root, leaf);
+
+                // Check if the new success rate is significantly lower than the baseline
+                if (baseline - newSuccessRate > getRetrainingThreshold(root->rows) || newSuccessRate < 0.8) {
                     leavesToRetrain.push_back(leaf); // Mark leaf for retraining
+                } else {
+                    // Update the baseline success rate for the leaf
+                    leaf->baselineSuccessRate = newSuccessRate;
                 }
             }
         }
     }
 
-    // Step 3: Train or retrain the selected leaves
+    // Step 3: Train leaves and check for low success
+    unordered_set<MazeNode *> parentsToRetrain;
     if (!leavesToRetrain.empty()) {
         // Train all leaves marked for retraining in one batch
-        trainLeafNodesInParallel(root, leavesToRetrain, 1.0);
-        // Update each retrained leaf's baseline success rate
-        for (MazeNode *leaf: leavesToRetrain) {
-            leaf->baselineSuccessRate = computeLeafSuccessRate(root, leaf); // Set new baseline after training
+        trainNodesInParallel(root, leavesToRetrain, 1.0);
+        for (const MazeNode *leaf: leavesToRetrain) {
+            // const double newSuccessRate = computeNodeSuccessRate(root, leaf);
+            // leaf->baselineSuccessRate = newSuccessRate;
+            if (leaf->baselineSuccessRate < 0.8 && leaf->parent) {
+                // If success rate is low, mark parent for retraining
+                parentsToRetrain.insert(leaf->parent);
+            }
         }
     }
 
     // Step 4: Propagate retraining upward through the hierarchy
     // Start with parents of retrained leaves
-    unordered_set<MazeNode *> currentLevelNodes;
-    for (const MazeNode *leaf: leavesToRetrain) {
-        if (leaf->parent) {
-            currentLevelNodes.insert(leaf->parent); // Add each retrained leaf's parent to check
-        }
-    }
-
-    // Continue propagating as long as there are nodes to check
+    unordered_set<MazeNode *> currentLevelNodes = parentsToRetrain;
     while (!currentLevelNodes.empty()) {
-        // Map to track which parents have affected children in this level
-        unordered_map<MazeNode *, vector<MazeNode *> > parentToAffected;
-        for (MazeNode *node: currentLevelNodes) {
-            if (node->parent) {
-                parentToAffected[node->parent].push_back(node); // Group affected children by parent
-            }
-        }
-
         // Prepare lists for nodes to train in this level and parents for the next level
         vector<MazeNode *> nodesToTrain;
         unordered_set<MazeNode *> nextLevelNodes;
@@ -1602,42 +1641,34 @@ void trainHierarchySmart(MazeNode *root, const vector<MazeNode *> &changedLeaves
         for (MazeNode *node: currentLevelNodes) {
             if (node->baselineSuccessRate < 0) {
                 // Node is untrained
-                // Check if all children of this node are trained
-                bool allChildrenTrained = true;
-                for (const MazeNode *child: node->children) {
-                    if (child->baselineSuccessRate < 0) {
-                        // Found an untrained child
-                        allChildrenTrained = false;
-                        break;
-                    }
-                }
-                if (allChildrenTrained) {
-                    // All children are trained, so this node can be trained
-                    nodesToTrain.push_back(node);
-                }
+                nodesToTrain.push_back(node);
             } else {
                 // Node is already trained
                 const double baseline = node->baselineSuccessRate; // Get the stored success rate
-                const double newSuccessRate = computeLeafSuccessRate(root, node);
-                // Compute current success using findValidPath
-                if (baseline - newSuccessRate > getRetrainingThreshold(root->rows)) {
-                    nodesToTrain.push_back(node); // Mark node for retraining
-                }
-            }
+                const double newSuccessRate = computeNodeSuccessRate(root, node);
 
-            // If this node is being trained/retrained, consider its parent for the next level
-            if (!nodesToTrain.empty() && nodesToTrain.back() == node && node->parent) {
-                nextLevelNodes.insert(node->parent); // Add parent to next level for checking
+                // Check if the new success rate is significantly lower than the baseline
+                if (baseline - newSuccessRate > getRetrainingThreshold(root->rows) || newSuccessRate < 0.8) {
+                    nodesToTrain.push_back(node); // Mark node for retraining
+                } else {
+                    // Update the baseline success rate for the leaf
+                    node->baselineSuccessRate = newSuccessRate;
+                }
             }
         }
 
         // Step 5: Train the selected nodes in this level
         if (!nodesToTrain.empty()) {
             // Train all marked nodes in one batch
-            trainLeafNodesInParallel(root, nodesToTrain, 1.0);
+            trainNodesInParallel(root, nodesToTrain, 1.0);
             // Update each trained node's baseline success rate
-            for (MazeNode *node: nodesToTrain) {
-                node->baselineSuccessRate = computeLeafSuccessRate(root, node); // Set new baseline
+            for (const MazeNode *node: nodesToTrain) {
+                // const double successRate = computeNodeSuccessRate(root, node);
+                // node->baselineSuccessRate = successRate;
+                if (node->baselineSuccessRate < 0.8 && node->parent) {
+                    // If success rate is low, mark parent for retraining
+                    nextLevelNodes.insert(node->parent);
+                }
             }
         }
 
@@ -1677,7 +1708,7 @@ void testLocalPathPlanning(MazeNode *root, const int numSteps) {
 
     // Test the agent's performance after applying local path planning
     srand(time(NULL));
-    auto [localPlanningTime, localSuccessRate, localAvgPath] = testAgent(*root->maze, root, root->rows, root->cols);
+    auto [localPlanningTime, localSuccessRate, localAvgPath] = testAgent(root);
 
     cout << "\n--- Local Path Planning Results ---\n";
     cout << "Static Training Time     : " << localStaticTime << "s\n";
@@ -1718,8 +1749,7 @@ void testHierarchicalPathPlanning(MazeNode *root, const int numSteps) {
 
     // Test the agent's performance using the root's Q-table (top-level policy)
     srand(time(NULL));
-    auto [hierarchyPlanningTime, hierarchySuccessRate, hierarchyAvgPath] = testAgent(
-        *root->maze, root, root->rows, root->cols);
+    auto [hierarchyPlanningTime, hierarchySuccessRate, hierarchyAvgPath] = testAgent(root);
 
     cout << "\n--- Hierarchical Path Planning Results ---\n";
     cout << "Static Training Time     : " << hierarchyStaticTime << "s\n";
@@ -2040,7 +2070,7 @@ void testVDNTraining(MazeNode *root, const int numChanges) {
 
     // Evaluate Performance with Path Planning
     srand(time(NULL));
-    auto [vdnPlanningTime, vdnSuccessRate, vdnAvgPath] = testAgent(*root->maze, root, root->rows, root->cols);
+    auto [vdnPlanningTime, vdnSuccessRate, vdnAvgPath] = testAgent(root);
 
     // Output Results
     cout << "\n--- VDN Training Results ---\n";
@@ -2063,7 +2093,7 @@ struct Metrics {
 void runFullExperiment() {
     vector<int> sizes = {20, 50, 100, 200, 300};
     vector<tuple<double, double, double> > difficulties = {
-        {0.8, 0.19, 0.01}, // Easy
+        {0.8, 0.18, 0.02}, // Easy
         {0.7, 0.29, 0.01}, // Medium
         {0.6, 0.395, 0.005} // Hard
     };
@@ -2091,7 +2121,7 @@ void runFullExperiment() {
 
         // Iterate over difficulties
         for (int d = 0; d < difficulties.size(); ++d) {
-            srand(d + 100);
+            srand(d + 20);
             auto [freeProb, obstProb, chargeProb] = difficulties[d];
             string diffName = (d == 0 ? "Easy" : d == 1 ? "Medium" : "Hard");
             cout << "\n\nDifficulty: " << diffName;
@@ -2153,7 +2183,7 @@ void runFullExperiment() {
                 // Test initial performance
                 auto [_, successRate, avgPath] = (name == "A* Oracle" || name == "A* Static")
                                                      ? testAgentAStar(*root->maze, size, size, shortestPaths)
-                                                     : testAgent(*root->maze, root, size, size);
+                                                     : testAgent(root);
                 totalSuccessRate += successRate;
                 totalPathLength += avgPath;
                 stepsCompleted++;
@@ -2201,7 +2231,7 @@ void runFullExperiment() {
                     auto [_, stepSuccessRate, stepAvgPath] = (name == "A* Oracle" || name == "A* Static")
                                                                  ? testAgentAStar(
                                                                      *root->maze, size, size, shortestPaths)
-                                                                 : testAgent(*root->maze, root, size, size);
+                                                                 : testAgent(root);
                     totalAdaptTime += adaptTime;
                     totalSuccessRate += stepSuccessRate;
                     totalPathLength += stepAvgPath;
