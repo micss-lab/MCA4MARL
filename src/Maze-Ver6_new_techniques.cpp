@@ -254,7 +254,7 @@ int checkExit(const vector<vector<int> > &matrix, const int x, const int y) {
 struct StartStats {
     int attempts = 0;
     int successes = 0;
-    [[nodiscard]] double successRate() const { return attempts > 0 ? static_cast<double>(successes) / attempts : 0.0; }
+    [[nodiscard]] double getSuccessRate() const { return attempts > 0 ? static_cast<double>(successes) / attempts : 0.0; }
 };
 
 /*************************************************************************/
@@ -280,7 +280,7 @@ pair<int, int> selectFirstPlace(const vector<vector<int> > &maze, const int star
             if (maze[x][y] == OBSTACLE) continue;
             positions.emplace_back(x, y);
             auto it = startStats.find({x, y});
-            const double successRate = it != startStats.end() ? it->second.successRate() : 0.0;
+            const double successRate = it != startStats.end() ? it->second.getSuccessRate() : 0.0;
             weights.push_back(1.0 - successRate + epsilon);
         }
     }
