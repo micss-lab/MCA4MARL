@@ -13,6 +13,7 @@ add_executable(Maze-Ver6
         src/hashpair.h src/hashpair.cpp
         src/treenode.h src/treenode.cpp
         src/startstats.h src/startstats.cpp
+        src/policyvisualizer.h src/policyvisualizer.cpp
         src/Maze-Ver6.cpp
 )
 
