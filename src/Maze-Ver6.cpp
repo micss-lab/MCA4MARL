@@ -23,196 +23,12 @@
 #include "hashpair.h"
 #include "maze.h"
 #include "policyvisualizer.h"
+#include "singleagent.h"
 #include "startstats.h"
 #include "table.h"
 #include "treenode.h"
 
-
 using namespace std;
-
-/*************************************************************************/
-struct Experience {
-    int x1, y1, action;
-    double reward;
-    int x2, y2;
-};
-
-/*************************************************************************/
-void trainAgentWithStoppingCriterion(TreeNode *node, const Maze &maze, const int rows, const int cols,
-                                     const int startRow, const int startCol, const int endRow, const int endCol,
-                                     const int maxStepsPerEpisode) {
-    int arrival = 0, x2, y2, iteration = 0, counter = 0, stableEpisodes = 0;
-    double actionReward = 0;
-    bool converged = false;
-
-    // Initialize Q-table if not already done
-    node->initQTable();
-
-    // Store previous Q-table state for convergence check
-    auto prevQTable = *node->qTable;
-
-    // Convergence parameters
-    double epsilon = 1.0;
-    constexpr double threshold = 5e-4;
-    constexpr int patience = 20;
-    constexpr double decayRate = 0.999;
-    constexpr int minEpisodes = 500;
-
-    // Experience replay buffer
-    vector<Experience> replayBuffer;
-    constexpr int bufferSize = 1000;
-    replayBuffer.reserve(bufferSize);
-    constexpr int batchSize = 64;
-
-    // Track starting position success
-    unordered_map<pair<int, int>, StartStats, HashPair> startStats;
-    mt19937 rng(random_device{}());
-
-    // Main training loop
-    while (!converged && counter < constants::EPISODE_COUNT) {
-        auto [x1, y1] = maze.selectFirstPlace(startRow, startCol, endRow, endCol, counter, startStats, rng);
-        iteration = 1;
-
-        // Reset episode
-        while (arrival == 0 && iteration < maxStepsPerEpisode) {
-            // Select action using epsilon-greedy policy and perform it
-            int act = node->selectAction(x1, y1, epsilon);
-            tie(x2, y2, act, actionReward) = maze.performAction(rows, cols, x1, y1, act);
-
-            // Store experience in replay buffer and update Q-table
-            replayBuffer.push_back({x1, y1, act, actionReward, x2, y2});
-            if (replayBuffer.size() > bufferSize) replayBuffer.erase(replayBuffer.begin());
-            node->updateQTable(x1, y1, act, actionReward, x2, y2);
-
-            // Perform experience replay
-            if (replayBuffer.size() >= batchSize && counter > minEpisodes) {
-                for (int i = 0; i < batchSize; i++) {
-                    const int idx = rand() % replayBuffer.size();
-                    const auto &[x1, y1, action, reward, x2, y2] = replayBuffer[idx];
-                    node->updateQTable(x1, y1, action, reward, x2, y2);
-                }
-            }
-            arrival = maze.checkExit(x2, y2);
-            x1 = x2;
-            y1 = y2;
-            iteration++;
-        }
-
-        arrival = 0;
-        epsilon = max(0.01, epsilon * decayRate);
-
-        // Check for convergence every 50 episodes
-        if (counter % 50 == 0 && counter >= minEpisodes) {
-            Table<double> &qTable = *node->qTable;
-            double maxChange = 0.0;
-            for (int row = node->startRow; row <= node->endRow; row++) {
-                for (int col = node->startCol; col <= node->endCol; col++) {
-                    // Get Q-values for the current position
-                    vector<double> &qValues = qTable(row, col, startRow, startCol);
-                    vector<double> &prevQValues = prevQTable(row, col, startRow, startCol);
-
-                    // Calculate maximum change compared to previous Q-table
-                    for (int a = 0; a < constants::ACTION_COUNT; a++) {
-                        maxChange = max(maxChange, fabs(qValues[a] - prevQValues[a]));
-                    }
-                }
-            }
-
-            // Check for convergence
-            if (maxChange < threshold && stableEpisodes >= patience) {
-                converged = true;
-            } else if (maxChange < threshold) {
-                stableEpisodes++;
-            } else {
-                stableEpisodes = 0;
-            }
-            prevQTable = *node->qTable;
-        }
-        counter++;
-    }
-}
-
-/*************************************************************************/
-vector<int> selectTopKActions(const vector<double> &qValues, const int rows, const int cols, const int x, const int y,
-                              const int k) {
-    const vector<pair<int, int> > moves = {{-1, 0}, {-1, 1}, {0, 1}, {1, 1}, {1, 0}, {1, -1}, {0, -1}, {-1, -1}};
-    vector<pair<double, int> > validQValues;
-
-    // Collect valid actions with Q-values
-    for (int i = 0; i < constants::ACTION_COUNT; ++i) {
-        const int newX = x + moves[i].first;
-        const int newY = y + moves[i].second;
-        if (newX >= 0 && newX < rows && newY >= 0 && newY < cols) {
-            validQValues.emplace_back(qValues[i], i);
-        }
-    }
-
-    if (validQValues.empty()) {
-        cerr << "Error: No valid actions at (" << x << ", " << y << ")\n";
-        return {};
-    }
-
-    // Sort by Q-value descending
-    sort(validQValues.begin(), validQValues.end(), greater<pair<double, int> >());
-
-    // Return top k actions (or all if fewer than k)
-    vector<int> actions;
-    for (int i = 0; i < min(k, static_cast<int>(validQValues.size())); ++i) {
-        actions.push_back(validQValues[i].second);
-    }
-    return actions;
-}
-
-/*************************************************************************/
-struct PathState {
-    int x, y, steps;
-    vector<pair<int, int> > path;
-};
-
-/*************************************************************************/
-tuple<bool, int, vector<pair<int, int> > > findValidPath(const TreeNode *root, const int startX, const int startY,
-                                                         const int maxSteps) {
-    // Extract maze and dimensions from the root node
-    const Maze &maze = *root->maze;
-    const int rows = root->rows;
-    const int cols = root->cols;
-
-    // Define possible moves
-    const vector<pair<int, int> > moves = {{-1, 0}, {-1, 1}, {0, 1}, {1, 1}, {1, 0}, {1, -1}, {0, -1}, {-1, -1}};
-    queue<PathState> toExplore;
-    set<pair<int, int> > visited;
-    toExplore.push({startX, startY, 0, {{startX, startY}}});
-    visited.insert({startX, startY});
-
-    // BFS to find a valid path
-    while (!toExplore.empty()) {
-        auto [x, y, steps, path] = toExplore.front();
-        toExplore.pop();
-
-        // Check if we reached the maximum steps
-        if (steps >= maxSteps) continue;
-
-        // Check if we reached the charging station
-        if (maze(x, y) == constants::CHARGING_STATION) {
-            return {true, steps, path};
-        }
-
-        // Select top k actions based on Q-values
-        const vector<double> &qValues = root->getQValues(x, y, root->startRow, root->startCol);
-        vector<int> actions = selectTopKActions(qValues, rows, cols, x, y, 2);
-        for (const int act: actions) {
-            int newX = x + moves[act].first;
-            int newY = y + moves[act].second;
-            if (maze(newX, newY) != constants::OBSTACLE && !visited.contains({newX, newY})) {
-                visited.insert({newX, newY});
-                vector<pair<int, int> > newPath = path;
-                newPath.emplace_back(newX, newY);
-                toExplore.push({newX, newY, steps + 1, newPath});
-            }
-        }
-    }
-    return {false, 0, {}}; // No valid path
-}
 
 /*************************************************************************/
 struct ThreadResult {
@@ -249,7 +65,7 @@ tuple<double, double, double> testAgent(const TreeNode *root) {
             const int y1 = positions[i].second;
 
             auto start = chrono::high_resolution_clock::now();
-            auto [success, steps, path] = findValidPath(root, x1, y1, maxStepsPerEpisode);
+            auto [success, steps, path] = root->findValidPath(x1, y1, maxStepsPerEpisode);
             auto end = chrono::high_resolution_clock::now();
 
             result.planningTime += chrono::duration<double>(end - start).count();
@@ -721,7 +537,7 @@ double computeNodeSuccessRate(const TreeNode *root, const TreeNode *node) {
             totalPositions++;
 
             // Try to find a valid path from this position
-            auto [success, steps, path] = findValidPath(root, x, y, maxSteps);
+            auto [success, steps, path] = root->findValidPath(x, y, maxSteps);
             if (success) {
                 successfulPaths++;
             }
@@ -1094,8 +910,8 @@ void trainNodesInParallel(TreeNode *root, const vector<TreeNode *> &nodes, const
         threads.emplace_back([root, node, mode]() {
             if (mode == "Hierarchy") {
                 const int maxSteps = (node->endRow - node->startRow + 1) + (node->endCol - node->startCol + 1);
-                trainAgentWithStoppingCriterion(node, *root->maze, node->rows, node->cols, node->startRow,
-                                                node->startCol, node->endRow, node->endCol, maxSteps);
+                SingleAgentTraining(node, *root->maze, node->rows, node->cols, node->startRow, node->startCol,
+                                    node->endRow, node->endCol, maxSteps);
             } else if (mode == "EqAvg") {
                 const int T = (node->endRow - node->startRow + 1) * (node->endCol - node->startCol + 1) * 200;
                 fedAsynQ_EqAvg(node, *root->maze, 1000, T, 12);
@@ -1156,301 +972,14 @@ void trainNodesInParallel(TreeNode *root, const vector<TreeNode *> &nodes, const
 }
 
 /*************************************************************************/
-// void runAgentEpisodes(const TreeNode *node, const vector<vector<int> > &maze, const double epsilon,
-//                       const int maxStepsPerEpisode, mt19937 &rng,
-//                       unordered_map<pair<int, int>, vector<double>, HashPair> &localQTable,
-//                       vector<Experience> &localReplayBuffer, const bool useReplay, const int numEpisodes,
-//                       unordered_map<pair<int, int>, StartStats, HashPair> &startStats, mutex &statsMutex) {
-//
-//     // Extract maze dimensions from the node
-//     const int startRow = node->startRow;
-//     const int startCol = node->startCol;
-//     const int endRow = node->endRow;
-//     const int endCol = node->endCol;
-//
-//     // Generate the episodes
-//     for (int episode = 0; episode < numEpisodes; ++episode) {
-//         int arrival = 0, x2, y2, iteration = 1;
-//         double actionReward = 0;
-//
-//         // Random start position
-//         // auto [x1, y1] = selectFirstPlace(maze, startRow, startCol, endRow, endCol);
-//         auto [x1, y1] = selectFirstPlace(maze, startRow, startCol, endRow, endCol, 0, startStats, rng);
-//         pair<int, int> startPos = {x1, y1};
-//
-//         // Episode loop
-//         while (arrival == 0 && iteration < maxStepsPerEpisode) {
-//             // Select and perform action
-//             auto qValues = localQTable.find({x1, y1}) != localQTable.end()
-//                                ? localQTable[{x1, y1}]
-//                                : vector<double>(constants::ACTION_COUNT, 0.0);
-//             int act = selectAction(qValues, x1, y1, epsilon, node->rows, node->cols, false, startRow, startCol, endRow,
-//                                    endCol);
-//             tie(x2, y2, act, actionReward) = performAction(maze, node->rows, node->cols, x1, y1, act);
-//
-//             // Store experience and update local Q-table
-//             localReplayBuffer.push_back({x1, y1, act, actionReward, x2, y2});
-//             if (localReplayBuffer.size() > 1000) localReplayBuffer.erase(localReplayBuffer.begin());
-//
-//             // Simplified updateQTable for local Q-table
-//             auto &qValuesCurrent = localQTable[{x1, y1}];
-//             if (qValuesCurrent.empty()) qValuesCurrent.resize(constants::ACTION_COUNT, 0.0);
-//             auto qValuesNext = localQTable.find({x2, y2}) != localQTable.end()
-//                                    ? localQTable[{x2, y2}]
-//                                    : vector<double>(constants::ACTION_COUNT, 0.0);
-//             const double maxNextQ = *max_element(qValuesNext.begin(), qValuesNext.end());
-//             const double oldQ = qValuesCurrent[act];
-//             qValuesCurrent[act] = oldQ + constants::LEARNING_RATE * (actionReward + constants::DISCOUNT_FACTOR * maxNextQ - oldQ);
-//
-//             // Experience replay
-//             if (useReplay && localReplayBuffer.size() >= 64) {
-//                 for (int i = 0; i < 64; ++i) {
-//                     const int idx = rand() % localReplayBuffer.size();
-//                     const auto &[x1_r, y1_r, action, reward, x2_r, y2_r] = localReplayBuffer[idx];
-//                     auto &qValues_r = localQTable[{x1_r, y1_r}];
-//                     if (qValues_r.empty()) qValues_r.resize(constants::ACTION_COUNT, 0.0);
-//                     auto qValuesNext_r = localQTable.find({x2_r, y2_r}) != localQTable.end()
-//                                              ? localQTable[{x2_r, y2_r}]
-//                                              : vector<double>(constants::ACTION_COUNT, 0.0);
-//                     const double maxNextQ_r = *max_element(qValuesNext_r.begin(), qValuesNext_r.end());
-//                     const double oldQ_r = qValues_r[action];
-//                     qValues_r[action] = oldQ_r + constants::LEARNING_RATE * (reward + constants::DISCOUNT_FACTOR * maxNextQ_r - oldQ_r);
-//                 }
-//             }
-//
-//             arrival = checkExit(maze, x2, y2);
-//             x1 = x2;
-//             y1 = y2;
-//             iteration++;
-//         }
-//
-//         // Update startStats with episode outcome
-//         {
-//             lock_guard<mutex> lock(statsMutex);
-//             auto& stats = startStats[startPos];
-//             stats.attempts++;
-//             if (arrival == 1) stats.successes++;
-//         }
-//     }
-//
-//     // Remove Q-values for positions outside the node's subenvironment
-//     for (auto it = localQTable.begin(); it != localQTable.end();) {
-//         const int x = it->first.first;
-//         const int y = it->first.second;
-//         if (x < startRow || x > endRow || y < startCol || y > endCol) {
-//             it = localQTable.erase(it);
-//         } else {
-//             ++it;
-//         }
-//     }
-// }
-
-/*************************************************************************/
-// void trainNodeWithMultiAgents(const TreeNode *root, TreeNode *node, const vector<vector<int> > &maze, double epsilon,
-//                               const int maxStepsPerEpisode, int numAgents) {
-//     node->initQTable();
-//     auto prevQTable = *node->qTable;
-//
-//     // Determine number of agents based on node size
-//     if (node->endRow - node->startRow + 1 >= 40) {
-//         numAgents = 8;
-//         cout << "Using 8 agents for node size " << (node->endRow - node->startRow + 1) << "x"
-//              << (node->endCol - node->startCol + 1) << "\n";
-//     }
-//
-//     // Convergence parameters
-//     constexpr double successThreshold = 0.99; // 99% success rate
-//     constexpr double stabilityMargin = 0.01; // Allow 1% deviation from best success
-//     constexpr int patience = 5; // Wait 5 batches for stability
-//     constexpr double decayRate = 0.99; // Epsilon decay per batch
-//     constexpr int episodesPerBatch = 50; // Aggregate every 100 episodes
-//     int counter = 0, stableEpisodes = 0;
-//     bool converged = false;
-//     double bestSuccessRate = 0.0; // Track best success rate seen
-//
-//     // Agent setup
-//     vector<thread> threads;
-//     vector<mt19937> rngs(numAgents);
-//     vector<unordered_map<pair<int, int>, vector<double>, HashPair> > localQTables(numAgents);
-//
-//     // Initialize all positions in the localQTables
-//     // for (int i = node->startRow; i <= node->endRow; ++i) {
-//     //     for (int j = node->startCol; j <= node->endCol; ++j) {
-//     //         for (auto &qTable: localQTables) {
-//     //             qTable[{i, j}] = vector<double>(constants::ACTION_COUNT, 0.0);
-//     //         }
-//     //     }
-//     // }
-//
-//     // Initialize local Q-tables with shared Q-table
-//     for (auto &qTable: localQTables) {
-//         qTable = *node->qTable;
-//     }
-//
-//     vector<vector<Experience> > localReplayBuffers(numAgents, vector<Experience>());
-//     for (auto &buffer: localReplayBuffers) {
-//         buffer.reserve(1000);
-//     }
-//     for (int i = 0; i < numAgents; ++i) {
-//         rngs[i].seed(random_device{}() + i);
-//     }
-//
-//     // Track start position success
-//     unordered_map<pair<int, int>, StartStats, HashPair> startStats;
-//     mutex statsMutex;
-//
-//     // Main training loop
-//     while (!converged && counter < 10000) {
-//         threads.clear();
-//
-//         // Spawn agent threads for batch of episodes
-//         for (int i = 0; i < numAgents; ++i) {
-//             threads.emplace_back(runAgentEpisodes, node, ref(maze), epsilon, maxStepsPerEpisode, ref(rngs[i]),
-//                                  ref(localQTables[i]),
-//                                  ref(localReplayBuffers[i]), false, episodesPerBatch, ref(startStats), ref(statsMutex));
-//         }
-//
-//         // Join threads
-//         for (auto &thread: threads) {
-//             if (thread.joinable())
-//                 thread.join();
-//         }
-//
-//         unordered_map<pair<int, int>, vector<double>, HashPair> newQTable;
-//         unordered_map<pair<int, int>, int, HashPair> stateActionCounts;
-//
-//         // Pre-populate with subenvironment positions
-//         for (int r = node->startRow; r <= node->endRow; ++r) {
-//             for (int c = node->startCol; c <= node->endCol; ++c) {
-//                 newQTable[{r, c}] = vector<double>(constants::ACTION_COUNT, 0.0);
-//                 stateActionCounts[{r, c}] = 0;
-//             }
-//         }
-//
-//         // Collect all state-action pairs
-//         for (const auto &localQTable: localQTables) {
-//             for (const auto &[pos, qValues]: localQTable) {
-//                 auto &newQValues = newQTable[pos];
-//                 auto &counts = stateActionCounts[pos];
-//                 counts++;
-//                 for (int a = 0; a < constants::ACTION_COUNT; ++a) {
-//                     newQValues[a] += qValues[a];
-//                 }
-//             }
-//         }
-//
-//         // Average Q-values
-//         for (auto &[pos, qValues]: newQTable) {
-//             if (stateActionCounts[pos] == 0) continue; // Skip if no actions taken
-//             for (int a = 0; a < constants::ACTION_COUNT; ++a) {
-//                 qValues[a] /= stateActionCounts[pos];
-//             }
-//         }
-//
-//         // Update shared Q-table
-//         *node->qTable = move(newQTable);
-//
-//         // Copy shared Q-table back to local Q-tables
-//         for (auto &localQTable: localQTables) {
-//             localQTable = *node->qTable;
-//         }
-//
-//         // Compute success rate
-//         const double successRate = computeNodeSuccessRate(root, node);
-//
-//         cout << "Batch " << counter << ": "
-//              << "Success Rate: " << successRate * 100 << "%, "
-//              << "Best Success Rate: " << bestSuccessRate * 100 << "%, "
-//              << "Epsilon: " << epsilon << "\n";
-//
-//         // Check for convergence
-//         if (successRate >= successThreshold || fabs(successRate - bestSuccessRate) <= stabilityMargin) {
-//             cout << "Incrementing stable episodes...\n";
-//             stableEpisodes++;
-//             if (stableEpisodes >= patience) {
-//                 cout << "Converged after " << counter << " batches.\n";
-//                 converged = true;
-//             }
-//         } else {
-//             stableEpisodes = 0;
-//         }
-//         // Update the best success rate
-//         bestSuccessRate = max(bestSuccessRate, successRate);
-//
-//         // Update epsilon and counter
-//         epsilon = max(0.01, epsilon * decayRate);
-//         prevQTable = *node->qTable;
-//         counter += episodesPerBatch;
-//     }
-// }
-
-/*************************************************************************/
-// void trainNodesInParallelMultiAgents(TreeNode *root, const vector<TreeNode *> &nodes, double epsilon) {
-//     constexpr int numAgents = 8; // Adjustable
-//     vector<thread> threads;
-//
-//     for (TreeNode *node: nodes) {
-//         threads.emplace_back([root, node, epsilon]() {
-//             const int maxSteps = (node->endRow - node->startRow + 1) + (node->endCol - node->startCol + 1);
-//             trainNodeWithMultiAgents(root, node, *root->maze, epsilon, maxSteps, numAgents);
-//             propagateQTableUpwards(node);
-//             propagateQTableDownwards(node);
-//         });
-//     }
-//
-//     for (auto &thread: threads) {
-//         if (thread.joinable()) {
-//             thread.join();
-//         }
-//     }
-//
-//     cout << "Updating success rates...\n";
-//
-//     // Recompute success rates for retrained nodes and their descendants
-//     unordered_set<TreeNode *> visited; // Track nodes to avoid recomputing shared descendants
-//     for (TreeNode *node: nodes) {
-//         if (visited.find(node) != visited.end()) continue; // Skip if already processed
-//
-//         // DFS to recompute success rates for node and descendants
-//         stack<TreeNode *> toVisit;
-//         toVisit.push(node);
-//
-//         while (!toVisit.empty()) {
-//             TreeNode *current = toVisit.top();
-//             toVisit.pop();
-//
-//             // Skip if already visited
-//             if (visited.find(current) != visited.end()) continue;
-//             visited.insert(current);
-//
-//             // Recompute success rate if node has a qTable or was trained
-//             if (current->qTable) {
-//                 const double newSuccessRate = computeNodeSuccessRate(root, current);
-//                 current->baselineSuccessRate = newSuccessRate;
-//                 cout << "Node (" << current->startRow << ", " << current->startCol << ") -> (" << current->endRow <<
-//                         ", " << current->endCol << ") " << "Size: " << (current->endRow - current->startRow + 1) << "x"
-//                         << (current->endCol - current->startCol + 1) << " " << "Success Rate: " << newSuccessRate * 100
-//                         << "%\n";
-//             }
-//
-//             // Add children to visit
-//             for (TreeNode *child: current->children) {
-//                 toVisit.push(child);
-//             }
-//         }
-//     }
-//     cout << "Finished updating success rates.\n";
-// }
-
-/*************************************************************************/
 void trainNodesSequentially(const TreeNode *root, const vector<TreeNode *> &nodes) {
     for (TreeNode *node: nodes) {
         // Calculate maxSteps dynamically based on leaf size
         const int maxSteps = (node->endRow - node->startRow + 1) + (node->endCol - node->startCol + 1);
 
         // Train using root's maze and leaf's qTable
-        trainAgentWithStoppingCriterion(node, *root->maze, node->rows, node->cols, node->startRow, node->startCol,
-                                        node->endRow, node->endCol, maxSteps);
+        SingleAgentTraining(node, *root->maze, node->rows, node->cols, node->startRow, node->startCol, node->endRow,
+                            node->endCol, maxSteps);
 
         // Propagate the Q-table results upwards
         propagateQTableUpwards(node);
@@ -2233,7 +1762,7 @@ struct Metrics {
 
 /*************************************************************************/
 void runFullExperiment() {
-    vector<int> sizes = {50, 100, 200, 300};
+    vector<int> sizes = {20, 50, 100, 200, 300};
     vector<tuple<double, double, double> > difficulties = {
         {0.8, 0.18, 0.02}, // Easy
         {0.7, 0.29, 0.01}, // Medium
