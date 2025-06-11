@@ -159,3 +159,72 @@ int TreeNode::selectAction(const int x, const int y, const double epsilon) const
     }
     return action;
 }
+
+vector<int> TreeNode::selectTopKActions(const vector<double> &qValues, const int rows, const int cols, const int x,
+                                        const int y, const int k) {
+    const vector<pair<int, int> > moves = {{-1, 0}, {-1, 1}, {0, 1}, {1, 1}, {1, 0}, {1, -1}, {0, -1}, {-1, -1}};
+    vector<pair<double, int> > validQValues;
+
+    // Collect valid actions with Q-values
+    for (int i = 0; i < constants::ACTION_COUNT; ++i) {
+        const int newX = x + moves[i].first;
+        const int newY = y + moves[i].second;
+        if (newX >= 0 && newX < rows && newY >= 0 && newY < cols) {
+            validQValues.emplace_back(qValues[i], i);
+        }
+    }
+
+    if (validQValues.empty()) {
+        cerr << "Error: No valid actions at (" << x << ", " << y << ")\n";
+        return {};
+    }
+
+    // Sort by Q-value descending
+    ranges::sort(validQValues, greater<pair<double, int> >());
+
+    // Return top k actions (or all if fewer than k)
+    vector<int> actions;
+    for (int i = 0; i < min(k, static_cast<int>(validQValues.size())); ++i) {
+        actions.push_back(validQValues[i].second);
+    }
+    return actions;
+}
+
+tuple<bool, int, vector<pair<int, int> > > TreeNode::findValidPath(const int startX, const int startY,
+                                                                   const int maxSteps) const {
+    // Define possible moves
+    const vector<pair<int, int> > moves = {{-1, 0}, {-1, 1}, {0, 1}, {1, 1}, {1, 0}, {1, -1}, {0, -1}, {-1, -1}};
+    queue<PathState> toExplore;
+    set<pair<int, int> > visited;
+    toExplore.push({startX, startY, 0, {{startX, startY}}});
+    visited.insert({startX, startY});
+
+    // BFS to find a valid path
+    while (!toExplore.empty()) {
+        auto [x, y, steps, path] = toExplore.front();
+        toExplore.pop();
+
+        // Check if we reached the maximum steps
+        if (steps >= maxSteps) continue;
+
+        // Check if we reached the charging station
+        if ((*maze)(x, y) == constants::CHARGING_STATION) {
+            return {true, steps, path};
+        }
+
+        // Select top k actions based on Q-values
+        const vector<double> &qValues = getQValues(x, y, startRow, startCol);
+        vector<int> actions = selectTopKActions(qValues, rows, cols, x, y, 2);
+        for (const int act: actions) {
+            const int newX = x + moves[act].first;
+            const int newY = y + moves[act].second;
+            if ((*maze)(newX, newY) != constants::OBSTACLE && !visited.contains({newX, newY})) {
+                visited.insert({newX, newY});
+                vector<pair<int, int> > newPath = path;
+                newPath.emplace_back(newX, newY);
+                toExplore.push({newX, newY, steps + 1, newPath});
+            }
+        }
+    }
+    return {false, 0, {}}; // No valid path
+}
