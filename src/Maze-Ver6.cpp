@@ -738,10 +738,13 @@ void fedAsynQ_EqAvg(TreeNode *node, const Maze &maze, const int tau, const int T
     // Create aggregate Q-table
     const int localRows = node->endRow - node->startRow + 1;
     const int localCols = node->endCol - node->startCol + 1;
-    auto aggregatedQTable = Table<double> (localRows, localCols, constants::ACTION_COUNT);
+    auto aggregatedQTable = Table<double>(localRows, localCols, constants::ACTION_COUNT);
 
     // Create previous aggregate Q-table for convergence check
     auto prevAggregatedQTable = aggregatedQTable;
+
+    // Initialize the Q-table for the node (if not already initialized)
+    node->initQTable();
 
     // Local Q-tables for each agent
     vector<Table<double> > localQTables(K, *node->qTable);
@@ -898,9 +901,13 @@ void fedAsynQ_ImAvg(TreeNode *node, const Maze &maze, const int tau, const int T
     // Create previous aggregate Q-table for convergence check
     auto prevAggregatedQTable = Table<double>(localRows, localCols, constants::ACTION_COUNT);
 
-    // Local Q-tables for each agent
-    vector<Table<double> > localQTables(K, Table<double>(localRows, localCols, constants::ACTION_COUNT));
+    // Initialize the Q-table for the node (if not already initialized)
+    node->initQTable();
 
+    // Local Q-tables for each agent
+    vector<Table<double> > localQTables(K, *node->qTable);
+
+    // Create state-action counts for each agent
     auto stateActionCounts = vector<Table<int> >(K, Table<int>(localRows, localCols, constants::ACTION_COUNT));
 
     // Create a hash map for start statistics
