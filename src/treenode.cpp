@@ -228,3 +228,124 @@ tuple<bool, int, vector<pair<int, int> > > TreeNode::findValidPath(const int sta
     }
     return {false, 0, {}}; // No valid path
 }
+
+void TreeNode::createSubEnvironments(const Maze &maze) {
+    if ((endRow - startRow + 1) <= 20 && (endCol - startCol + 1) <= 20) {
+        return;
+    }
+
+    // Split the maze into four quadrants
+    const int midRow = (startRow + endRow) / 2;
+    const int midCol = (startCol + endCol) / 2;
+
+    // Create child nodes for each quadrant
+    auto *child1 = new TreeNode(maze, rows, cols, startRow, startCol, midRow, midCol, this);
+    auto *child2 = new TreeNode(maze, rows, cols, startRow, midCol + 1, midRow, endCol, this);
+    auto *child3 = new TreeNode(maze, rows, cols, midRow + 1, startCol, endRow, midCol, this);
+    auto *child4 = new TreeNode(maze, rows, cols, midRow + 1, midCol + 1, endRow, endCol, this);
+
+    // Add children to the current node
+    addChild(child1);
+    addChild(child2);
+    addChild(child3);
+    addChild(child4);
+
+    // Recursively split each child node
+    child1->createSubEnvironments(maze);
+    child2->createSubEnvironments(maze);
+    child3->createSubEnvironments(maze);
+    child4->createSubEnvironments(maze);
+}
+
+void TreeNode::propagateQTableDownwards() {
+    if (!qTable) return; // Skip if no qTable
+
+    // Propagate to all descendants, updating only those with qTables
+    stack<TreeNode *> toVisit;
+    toVisit.push(this);
+
+    // DFS to propagate Q-tables
+    while (!toVisit.empty()) {
+        const TreeNode *current = toVisit.top();
+        toVisit.pop();
+
+        for (TreeNode *child: current->children) {
+            // If child has no qTable, initialize it
+            if (!child->qTable) {
+                child->initQTable();
+            }
+            // Copy Q-values for positions within child's subenvironment
+            for (int row = child->startRow; row <= child->endRow; ++row) {
+                for (int col = child->startCol; col <= child->endCol; ++col) {
+                    vector<double> &childQValues = child->getQValues(row, col, child->startRow, child->startCol);
+                    const vector<double> currentQValues = getQValues(row, col, startRow, startCol);
+                    childQValues = currentQValues; // Copy all action Q-values
+                }
+            }
+            toVisit.push(child); // Continue to child regardless of qTable
+        }
+    }
+}
+
+void TreeNode::propagateQTableUpwards() const {
+    if (!qTable || !parent) return; // Skip if no qTable or no parent
+
+    const TreeNode *current = parent; // Start at parent
+    while (current) {
+        // Continue until root (no parent)
+        if (current->qTable) {
+            // Update only if qTable exists
+            // Copy Q-values for positions within node's subenvironment
+            for (int row = startRow; row <= endRow; ++row) {
+                for (int col = startCol; col <= endCol; ++col) {
+                    vector<double> &parentQValues = current->getQValues(row, col, current->startRow, current->startCol);
+                    const vector<double> nodeQValues = getQValues(row, col, startRow, startCol);
+                    parentQValues = nodeQValues; // Copy all action Q-values
+                }
+            }
+        }
+        current = current->parent; // Move up, even if no qTable
+    }
+}
+
+void TreeNode::collectLeafNodes(vector<TreeNode *> &leafNodes) {
+    if (children.empty()) {
+        // Leaf node
+        leafNodes.push_back(this);
+    } else {
+        for (TreeNode *child: children) {
+            child->collectLeafNodes(leafNodes);
+        }
+    }
+}
+
+double TreeNode::computeSuccessRate(const TreeNode *root) const {
+    if (!root || !root->maze || !root->qTable)
+        return 0.0; // Safety checks
+
+    // Use the full maze from the root for pathfinding
+    const Maze &maze = *root->maze;
+    const int rows = root->rows;
+    const int cols = root->cols;
+    const int maxSteps = rows + cols; // Consistent with testAgent
+
+    int totalPositions = 0;
+    int successfulPaths = 0;
+
+    // Iterate over all positions within the node's subenvironment
+    for (int x = startRow; x <= endRow; ++x) {
+        for (int y = startCol; y <= endCol; ++y) {
+            if (maze(x, y) == constants::OBSTACLE) continue; // Skip obstacles
+            totalPositions++;
+
+            // Try to find a valid path from this position
+            auto [success, steps, path] = root->findValidPath(x, y, maxSteps);
+            if (success) {
+                successfulPaths++;
+            }
+        }
+    }
+
+    // Compute success rate
+    return totalPositions > 0 ? static_cast<double>(successfulPaths) / totalPositions : 0.0;
+}

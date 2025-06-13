@@ -1,15 +1,15 @@
-import pandas as pd
 import matplotlib.pyplot as plt
 import os
+import pandas as pd
 
 # Create 'plots' directory if it doesn't exist
-plots_dir = "plots_incremental_smart"
+plots_dir = "plots"
 if not os.path.exists(plots_dir):
     os.makedirs(plots_dir)
 
 # Load data
-agg_data = pd.read_csv("results_incremental_smart.csv")
-detailed_data = pd.read_csv("results_incremental_detailed_smart.csv")
+agg_data = pd.read_csv("results.csv")
+detailed_data = pd.read_csv("results_detailed.csv")
 
 # Define difficulties and sizes
 difficulties = ["Easy", "Medium", "Hard"]
@@ -21,7 +21,7 @@ for difficulty in difficulties:
     for approach in agg_data["Approach"].unique():
         subset = agg_data[
             (agg_data["Difficulty"] == difficulty) & (agg_data["Approach"] == approach)
-        ].sort_values("Size")
+            ].sort_values("Size")
         if not subset.empty:
             plt.plot(
                 subset["Size"],
@@ -49,7 +49,7 @@ for difficulty in difficulties:
     for approach in agg_data["Approach"].unique():
         subset = agg_data[
             (agg_data["Difficulty"] == difficulty) & (agg_data["Approach"] == approach)
-        ].sort_values("Size")
+            ].sort_values("Size")
         if not subset.empty:
             plt.plot(
                 subset["Size"],
@@ -75,7 +75,7 @@ for difficulty in difficulties:
     for approach in agg_data["Approach"].unique():
         subset = agg_data[
             (agg_data["Difficulty"] == difficulty) & (agg_data["Approach"] == approach)
-        ].sort_values("Size")
+            ].sort_values("Size")
         if not subset.empty:
             plt.plot(
                 subset["Size"],
@@ -101,7 +101,7 @@ for difficulty in difficulties:
     for approach in agg_data["Approach"].unique():
         subset = agg_data[
             (agg_data["Difficulty"] == difficulty) & (agg_data["Approach"] == approach)
-        ]
+            ]
         if not subset.empty:
             plt.scatter(
                 subset["AdaptTimePerStep"],
@@ -130,7 +130,7 @@ for size in sizes:
                 & (detailed_data["Difficulty"] == difficulty)
                 & (detailed_data["Approach"] == approach)
                 & (detailed_data["TimeStep"] > 0)
-            ]
+                ]
             if not subset.empty:
                 plt.scatter(
                     subset["NumChanges"],
@@ -162,7 +162,7 @@ for size in sizes:
                 (detailed_data["Size"] == size)
                 & (detailed_data["Difficulty"] == difficulty)
                 & (detailed_data["Approach"] == approach)
-            ].sort_values("TimeStep")
+                ].sort_values("TimeStep")
             if not subset.empty:
                 cumulative_time = subset["AdaptTime"].cumsum()
                 plt.plot(
@@ -190,7 +190,7 @@ for size in sizes:
                 (detailed_data["Size"] == size)
                 & (detailed_data["Difficulty"] == difficulty)
                 & (detailed_data["Approach"] == approach)
-            ].sort_values("TimeStep")
+                ].sort_values("TimeStep")
             if not subset.empty:
                 plt.plot(
                     subset["TimeStep"],
@@ -219,7 +219,7 @@ for size in sizes:
             (detailed_data["Size"] == size)
             & (detailed_data["Difficulty"] == difficulty)
             & (detailed_data["TimeStep"] > 0)
-        ]  # Exclude initial step
+            ]  # Exclude initial step
         if not subset.empty:
             plt.boxplot(
                 [

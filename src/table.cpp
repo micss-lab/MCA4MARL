@@ -1,8 +1,8 @@
 #include "table.h"
 
 template<typename T>
-Table<T>::Table(const int rows, const int cols, const int actions)
-    : vector<vector<vector<T> > >(rows, vector<vector<T> >(cols, vector<T>(actions, T(0)))) {
+Table<T>::Table(const int rows, const int cols, const int actions) : vector<vector<vector<T> > >(
+    rows, vector<vector<T> >(cols, vector<T>(actions, T(0)))) {
 }
 
 template<typename T>

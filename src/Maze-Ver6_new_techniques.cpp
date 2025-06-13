@@ -254,7 +254,10 @@ int checkExit(const vector<vector<int> > &matrix, const int x, const int y) {
 struct StartStats {
     int attempts = 0;
     int successes = 0;
-    [[nodiscard]] double getSuccessRate() const { return attempts > 0 ? static_cast<double>(successes) / attempts : 0.0; }
+
+    [[nodiscard]] double getSuccessRate() const {
+        return attempts > 0 ? static_cast<double>(successes) / attempts : 0.0;
+    }
 };
 
 /*************************************************************************/

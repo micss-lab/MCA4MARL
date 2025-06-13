@@ -24,11 +24,11 @@ private:
     int current_timestep_;
     float cell_size_;
     vector<sf::RectangleShape> grid_;
-    vector<std::pair<sf::RectangleShape, sf::CircleShape> > arrows_;
+    vector<pair<sf::RectangleShape, sf::CircleShape> > arrows_;
     sf::Font font_;
 
     // Action to arrow direction (dx, dy) for visualization
-    const vector<std::pair<float, float> > action_arrows_ = {
+    const vector<pair<float, float> > action_arrows_ = {
         {0.0f, -0.3f}, // 0: Up
         {0.3f, -0.3f}, // 1: Up-right
         {0.3f, 0.0f}, // 2: Right

@@ -6,6 +6,7 @@
 #include <memory>
 #include <set>
 #include <vector>
+#include <stack>
 #include <queue>
 
 #include "constants.h"
@@ -27,8 +28,8 @@ public:
     double baselineSuccessRate;
 
     // Constructor
-    TreeNode(const Maze &fullMaze, int rows, int cols, int startRow, int startCol, int endRow,
-             int endCol, TreeNode *parent = nullptr, bool isRoot = false);
+    TreeNode(const Maze &fullMaze, int rows, int cols, int startRow, int startCol, int endRow, int endCol,
+             TreeNode *parent = nullptr, bool isRoot = false);
 
     // Destructor
     ~TreeNode();
@@ -55,6 +56,16 @@ public:
     static vector<int> selectTopKActions(const vector<double> &qValues, int rows, int cols, int x, int y, int k);
 
     [[nodiscard]] tuple<bool, int, vector<pair<int, int> > > findValidPath(int startX, int startY, int maxSteps) const;
+
+    void createSubEnvironments(const Maze &maze);
+
+    void propagateQTableDownwards();
+
+    void propagateQTableUpwards() const;
+
+    void collectLeafNodes(vector<TreeNode *> &leafNodes);
+
+    double computeSuccessRate(const TreeNode *root) const;
 };
 
 #endif //TREENODE_H

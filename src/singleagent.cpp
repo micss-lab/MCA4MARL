@@ -1,7 +1,7 @@
 #include "singleagent.h"
 
-Experience::Experience(const int x1, const int y1, int const action, const double reward, const int x2, const int y2)
-    : x1(x1), y1(y1), action(action), reward(reward), x2(x2), y2(y2) {
+Experience::Experience(const int x1, const int y1, int const action, const double reward, const int x2,
+                       const int y2) : x1(x1), y1(y1), action(action), reward(reward), x2(x2), y2(y2) {
 }
 
 tuple<int, int, int, double, int, int> Experience::getValues() const {

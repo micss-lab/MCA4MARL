@@ -34,13 +34,13 @@ Maze::Maze(const int rows, const int cols, const double freeSpaceProb, const dou
 
 int Maze::operator()(const int row, const int col) const {
     // Check bounds
-    if (row < 0 || row >= this->getRows() || col < 0 || col >= this->getCols()) {
+    if (row < 0 || row >= getRows() || col < 0 || col >= getCols()) {
         cerr << "Error: Index out of bounds." << endl;
         exit(1);
     }
     // Check if the position is valid
-    if ((*this)[row][col] != constants::FREE_SPACE && (*this)[row][col] != constants::OBSTACLE &&
-        (*this)[row][col] != constants::CHARGING_STATION) {
+    if ((*this)[row][col] != constants::FREE_SPACE && (*this)[row][col] != constants::OBSTACLE && (*this)[row][col] !=
+        constants::CHARGING_STATION) {
         cerr << "Error: Invalid cell type at (" << row << ", " << col << ")." << endl;
         exit(1);
     }
@@ -49,7 +49,7 @@ int Maze::operator()(const int row, const int col) const {
 
 void Maze::operator()(const int row, const int col, const int value) {
     // Check bounds
-    if (row < 0 || row >= this->size() || col < 0 || col >= (*this)[row].size()) {
+    if (row < 0 || row >= size() || col < 0 || col >= (*this)[row].size()) {
         cerr << "Error: Index out of bounds." << endl;
         exit(1);
     }

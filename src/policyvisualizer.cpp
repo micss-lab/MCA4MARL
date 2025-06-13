@@ -1,9 +1,10 @@
 #include "policyvisualizer.h"
 
-PolicyVisualizer::PolicyVisualizer(const TreeNode *node, const int size, string approach, const int max_timesteps)
-    : node_(node), size_(size), approach_(std::move(approach)), max_timesteps_(max_timesteps), current_timestep_(0) {
+PolicyVisualizer::PolicyVisualizer(const TreeNode *node, const int size, string approach,
+                                   const int max_timesteps) : node_(node), size_(size), approach_(move(approach)),
+                                                              max_timesteps_(max_timesteps), current_timestep_(0) {
     // Initialize window (800x800 or scaled for large mazes)
-    const int window_size = std::min(800, size * 20);
+    const int window_size = min(800, size * 20);
     cell_size_ = static_cast<float>(window_size) / size_;
     window_.create(sf::VideoMode(window_size, window_size + 50), "Policy Visualization");
     window_.setFramerateLimit(60);
@@ -57,12 +58,11 @@ void PolicyVisualizer::update() {
                 if (localRow >= 0 && localRow < qTable.getRows() &&
                     localCol >= 0 && localCol < qTable.getCols()) {
                     const auto &q_values = node_->getQValues(row, col, node_->startRow, node_->startCol);
-                    int best_action = static_cast<int>(std::distance(
-                        q_values.begin(), ranges::max_element(q_values)));
+                    int best_action = static_cast<int>(distance(q_values.begin(), ranges::max_element(q_values)));
 
                     // Create arrow: line + triangular arrowhead
                     auto [dx, dy] = action_arrows_[best_action];
-                    float angle = std::atan2(dy, dx) * 180 / 3.14159;
+                    float angle = atan2(dy, dx) * 180 / 3.14159;
                     float length = 0.3f * cell_size_; // Line length
                     float center_x = (col + 0.5f) * cell_size_;
                     float center_y = (row + 0.5f) * cell_size_;
@@ -113,7 +113,7 @@ void PolicyVisualizer::render() {
     if (!font_.getInfo().family.empty()) {
         sf::Text text;
         text.setFont(font_);
-        text.setString("Time Step: " + std::to_string(current_timestep_) + " - " + approach_);
+        text.setString("Time Step: " + to_string(current_timestep_) + " - " + approach_);
         text.setCharacterSize(20);
         text.setFillColor(sf::Color::Black);
         text.setPosition(10, size_ * cell_size_ + 10);
