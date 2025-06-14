@@ -62,9 +62,7 @@ void Experiments::simulateEnvironmentChanges(const TreeNode *root, const int num
 }
 
 void Experiments::runFullExperiment(bool visualize) {
-    vector<int> sizes = {20, 40, 80, 160, 320};
-    // vector<int> sizes = {20, 40, 80, 160, 320, 640, 1280};
-    // vector<int> sizes = {20, 50, 100, 200, 300};
+    vector<int> sizes = {20, 50, 100, 200, 300};
     vector<tuple<double, double, double> > difficulties = {
         {0.8, 0.18, 0.02}, // Easy
         {0.7, 0.29, 0.01}, // Medium
