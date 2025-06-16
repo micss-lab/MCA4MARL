@@ -54,7 +54,7 @@ void MultiAgent::fedAsynQ_EqAvg(TreeNode *node, const Maze &maze, const int tau,
                     for (int step = 0; step < tau; ++step) {
                         // Select and perform action
                         vector<double> &qValues = localQTable(x1, y1, node->startRow, node->startCol);
-                        int act = node->selectAction(x1, y1, epsilon);
+                        int act = node->selectAction(x1, y1, epsilon, maze);
 
                         int x2, y2, actionReward;
                         tie(x2, y2, act, actionReward) = maze.performAction(node->rows, node->cols, x1, y1, act);
@@ -217,7 +217,7 @@ void MultiAgent::fedAsynQ_ImAvg(TreeNode *node, const Maze &maze, const int tau,
                     for (int step = 0; step < tau; ++step) {
                         // Select and perform action
                         vector<double> &qValues = localQTable(x1, y1, node->startRow, node->startCol);
-                        int act = node->selectAction(x1, y1, epsilon);
+                        int act = node->selectAction(x1, y1, epsilon, maze);
 
                         int x2, y2, actionReward;
                         tie(x2, y2, act, actionReward) = maze.performAction(node->rows, node->cols, x1, y1, act);

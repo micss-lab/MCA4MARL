@@ -46,7 +46,7 @@ SingleAgentTraining::SingleAgentTraining(TreeNode *node, const Maze &maze, const
         // Reset episode
         while (arrival == 0 && iteration < maxStepsPerEpisode) {
             // Select action using epsilon-greedy policy and perform it
-            int act = node->selectAction(x1, y1, epsilon);
+            int act = node->selectAction(x1, y1, epsilon, maze);
             tie(x2, y2, act, actionReward) = maze.performAction(rows, cols, x1, y1, act);
 
             // Store experience in replay buffer and update Q-table

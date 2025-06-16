@@ -218,9 +218,9 @@ tuple<int, int, int, double> Maze::performAction(const int rows, const int cols,
     if ((*this)[x2][y2] == constants::CHARGING_STATION) {
         reward = 100.0; // Large reward for reaching the goal
     } else if (changePos == 0) {
-        reward = -20.0; // Stronger penalty for hitting obstacles
+        reward = -10.0; // Stronger penalty for hitting obstacles
     } else {
-        reward = -2.0; // Increased step penalty to encourage shorter paths
+        reward = -1.0; // Increased step penalty to encourage shorter paths
     }
 
     return make_tuple(x2, y2, action, reward);
