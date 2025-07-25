@@ -51,7 +51,7 @@ public:
 
     void updateQTable(int x1, int y1, int action, double reward, int x2, int y2) const;
 
-    [[nodiscard]] int selectAction(int x, int y, double epsilon, const Maze& maze) const;
+    [[nodiscard]] int selectAction(int x, int y, double epsilon) const;
 
     static vector<int> selectTopKActions(const vector<double> &qValues, int rows, int cols, int x, int y, int k);
 

@@ -115,7 +115,7 @@ void TreeNode::updateQTable(const int x1, const int y1, const int action, const 
     qValues[action] += constants::LEARNING_RATE * (reward + constants::DISCOUNT_FACTOR * maxQNext - qValues[action]);
 }
 
-int TreeNode::selectAction(const int x, const int y, const double epsilon, const Maze& maze) const {
+int TreeNode::selectAction(const int x, const int y, const double epsilon) const {
     const double randomValue = static_cast<double>(rand()) / RAND_MAX;
 
     // Define possible moves
@@ -134,21 +134,9 @@ int TreeNode::selectAction(const int x, const int y, const double epsilon, const
     for (int i = 0; i < constants::ACTION_COUNT; ++i) {
         const int newX = x + moves[i].first;
         const int newY = y + moves[i].second;
-        // Filter valid actions based on boundaries of the subenvironment and obstacles
-        if (newX >= startRow && newX <= endRow && newY >= startCol && newY <= endCol && maze(newX, newY) != constants::OBSTACLE) {
+        // Filter valid actions based on boundaries of the subenvironment
+        if (newX >= startRow && newX <= endRow && newY >= startCol && newY <= endCol) {
             validActions.push_back(i);
-        }
-    }
-
-    // If no valid action, return a random action
-    if (validActions.empty()) {
-        for (int i = 0; i < constants::ACTION_COUNT; ++i) {
-            const int newX = x + moves[i].first;
-            const int newY = y + moves[i].second;
-            // Filter valid actions based on boundaries of the subenvironment and obstacles
-            if (newX >= startRow && newX <= endRow && newY >= startCol && newY <= endCol) {
-                validActions.push_back(i);
-            }
         }
     }
 
