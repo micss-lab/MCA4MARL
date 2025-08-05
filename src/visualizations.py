@@ -34,7 +34,7 @@ for difficulty in difficulties:
     plt.xlabel("Maze Size")
     plt.ylabel("Adaptation Time per Step (s)")
     plt.title(
-        f"Adaptation Time per Step vs. Maze Size ({difficulty} Difficulty, 50 Steps)"
+        f"Adaptation Time per Step vs. Maze Size ({difficulty} Difficulty)"
     )
     plt.xticks(sizes)
     plt.grid(axis="y", linestyle="--", alpha=0.7)
@@ -61,7 +61,7 @@ for difficulty in difficulties:
             )
     plt.xlabel("Maze Size")
     plt.ylabel("Average Success Rate (%)")
-    plt.title(f"Avg Success Rate vs. Maze Size ({difficulty} Difficulty, 50 Steps)")
+    plt.title(f"Avg Success Rate vs. Maze Size ({difficulty} Difficulty)")
     plt.xticks(sizes)
     plt.grid(axis="y", linestyle="--", alpha=0.7)
     plt.legend()
@@ -87,7 +87,7 @@ for difficulty in difficulties:
             )
     plt.xlabel("Maze Size")
     plt.ylabel("Average Path Length")
-    plt.title(f"Avg Path Length vs. Maze Size ({difficulty} Difficulty, 50 Steps)")
+    plt.title(f"Avg Path Length vs. Maze Size ({difficulty} Difficulty)")
     plt.xticks(sizes)
     plt.grid(axis="y", linestyle="--", alpha=0.7)
     plt.legend()
@@ -95,65 +95,7 @@ for difficulty in difficulties:
     plt.savefig(f"{plots_dir}/avg_path_length_line_{difficulty.lower()}.png")
     plt.close()
 
-# 4. Scatter Plots: Success Rate vs. Adaptation Time for Each Difficulty
-for difficulty in difficulties:
-    plt.figure(figsize=(12, 6))
-    for approach in agg_data["Approach"].unique():
-        subset = agg_data[
-            (agg_data["Difficulty"] == difficulty) & (agg_data["Approach"] == approach)
-            ]
-        if not subset.empty:
-            plt.scatter(
-                subset["AdaptTimePerStep"],
-                subset["AvgSuccessRate"] * 100,
-                s=subset["Size"] * 5,
-                label=approach,
-                alpha=0.5,
-            )
-    plt.xlabel("Adaptation Time per Step (s)")
-    plt.ylabel("Average Success Rate (%)")
-    plt.title(
-        f"Avg Success Rate vs. Adaptation Time per Step ({difficulty} Difficulty, 50 Steps)"
-    )
-    plt.legend()
-    plt.tight_layout()
-    plt.savefig(f"{plots_dir}/success_vs_time_scatter_{difficulty.lower()}.png")
-    plt.close()
-
-# 5. Scatter Plot: Adaptation Time vs. Number of Changes per Step for Each Size and Difficulty
-for size in sizes:
-    for difficulty in difficulties:
-        plt.figure(figsize=(12, 6))
-        for approach in detailed_data["Approach"].unique():
-            subset = detailed_data[
-                (detailed_data["Size"] == size)
-                & (detailed_data["Difficulty"] == difficulty)
-                & (detailed_data["Approach"] == approach)
-                & (detailed_data["TimeStep"] > 0)
-                ]
-            if not subset.empty:
-                plt.scatter(
-                    subset["NumChanges"],
-                    subset["AdaptTime"],
-                    s=50,
-                    label=approach,
-                    alpha=0.5,
-                )
-        plt.xlabel("Number of Changes per Step")
-        plt.ylabel("Adaptation Time (s)")
-        plt.title(
-            f"Adaptation Time vs. Num Changes per Step ({size}x{size}, {difficulty} Difficulty)"
-        )
-        plt.xticks(range(1, 11))
-        plt.grid(axis="y", linestyle="--", alpha=0.7)
-        plt.legend()
-        plt.tight_layout()
-        plt.savefig(
-            f"{plots_dir}/adapt_time_vs_changes_{size}x{size}_{difficulty.lower()}.png"
-        )
-        plt.close()
-
-# 6. Line Plot: Cumulative Adaptation Time vs. Time Step for Each Size and Difficulty
+# 4. Line Plot: Cumulative Adaptation Time vs. Time Step for Each Size and Difficulty
 for size in sizes:
     for difficulty in difficulties:
         plt.figure(figsize=(12, 6))
@@ -181,7 +123,7 @@ for size in sizes:
         )
         plt.close()
 
-# 7. Line Plot: Success Rate vs. Time Step for Each Size and Difficulty
+# 5. Line Plot: Success Rate vs. Time Step for Each Size and Difficulty
 for size in sizes:
     for difficulty in difficulties:
         plt.figure(figsize=(12, 6))
@@ -211,7 +153,7 @@ for size in sizes:
         )
         plt.close()
 
-# 8. Box Plot: Adaptation Time by Approach for Each Size and Difficulty
+# 6. Box Plot: Adaptation Time by Approach for Each Size and Difficulty
 for size in sizes:
     for difficulty in difficulties:
         plt.figure(figsize=(10, 6))
