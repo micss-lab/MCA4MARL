@@ -1,0 +1,7 @@
+Approach,Size,Difficulty,InitialTime,AdaptTimePerStep,AvgSuccessRate,AvgPathLength
+A* Static,50,Hard,0.265757,0,0.756889,7.5309
+A* Oracle,50,Hard,0.256553,0.253279,0.997083,9.47206
+onlyTrainLeafNodes,50,Hard,19.0413,0.902248,0.671584,6.35611
+singleAgent,50,Hard,38.8754,0.531285,0.985531,10.1443
+fedAsynQ_EqAvg,50,Hard,13.5003,0.0902787,0.987111,9.49397
+fedAsynQ_ImAvg,50,Hard,19.3332,0.099577,0.992277,9.59267
