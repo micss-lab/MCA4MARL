@@ -21,7 +21,7 @@ for difficulty in difficulties:
     for approach in agg_data["Approach"].unique():
         subset = agg_data[
             (agg_data["Difficulty"] == difficulty) & (agg_data["Approach"] == approach)
-            ].sort_values("Size")
+        ].sort_values("Size")
         if not subset.empty:
             plt.plot(
                 subset["Size"],
@@ -33,9 +33,7 @@ for difficulty in difficulties:
             )
     plt.xlabel("Maze Size")
     plt.ylabel("Adaptation Time per Step (s)")
-    plt.title(
-        f"Adaptation Time per Step vs. Maze Size ({difficulty} Difficulty)"
-    )
+    plt.title(f"Adaptation Time per Step vs. Maze Size ({difficulty} Difficulty)")
     plt.xticks(sizes)
     plt.grid(axis="y", linestyle="--", alpha=0.7)
     plt.legend()
@@ -49,7 +47,7 @@ for difficulty in difficulties:
     for approach in agg_data["Approach"].unique():
         subset = agg_data[
             (agg_data["Difficulty"] == difficulty) & (agg_data["Approach"] == approach)
-            ].sort_values("Size")
+        ].sort_values("Size")
         if not subset.empty:
             plt.plot(
                 subset["Size"],
@@ -75,7 +73,7 @@ for difficulty in difficulties:
     for approach in agg_data["Approach"].unique():
         subset = agg_data[
             (agg_data["Difficulty"] == difficulty) & (agg_data["Approach"] == approach)
-            ].sort_values("Size")
+        ].sort_values("Size")
         if not subset.empty:
             plt.plot(
                 subset["Size"],
@@ -104,7 +102,7 @@ for size in sizes:
                 (detailed_data["Size"] == size)
                 & (detailed_data["Difficulty"] == difficulty)
                 & (detailed_data["Approach"] == approach)
-                ].sort_values("TimeStep")
+            ].sort_values("TimeStep")
             if not subset.empty:
                 cumulative_time = subset["AdaptTime"].cumsum()
                 plt.plot(
@@ -132,7 +130,7 @@ for size in sizes:
                 (detailed_data["Size"] == size)
                 & (detailed_data["Difficulty"] == difficulty)
                 & (detailed_data["Approach"] == approach)
-                ].sort_values("TimeStep")
+            ].sort_values("TimeStep")
             if not subset.empty:
                 plt.plot(
                     subset["TimeStep"],
@@ -161,7 +159,7 @@ for size in sizes:
             (detailed_data["Size"] == size)
             & (detailed_data["Difficulty"] == difficulty)
             & (detailed_data["TimeStep"] > 0)
-            ]  # Exclude initial step
+        ]  # Exclude initial step
         if not subset.empty:
             plt.boxplot(
                 [
@@ -181,3 +179,29 @@ for size in sizes:
             f"{plots_dir}/adapt_time_box_{size}x{size}_{difficulty.lower()}.png"
         )
         plt.close()
+
+# 7. Line Plots: Initial Training Time vs. Maze Size for Each Difficulty
+for difficulty in difficulties:
+    plt.figure(figsize=(10, 6))
+    for approach in agg_data["Approach"].unique():
+        subset = agg_data[
+            (agg_data["Difficulty"] == difficulty) & (agg_data["Approach"] == approach)
+        ].sort_values("Size")
+        if not subset.empty:
+            plt.plot(
+                subset["Size"],
+                subset["InitialTime"],
+                marker="o",
+                label=approach,
+                linewidth=2,
+                markersize=8,
+            )
+    plt.xlabel("Maze Size")
+    plt.ylabel("Initial Training Time (s)")
+    plt.title(f"Initial Training Time vs. Maze Size ({difficulty} Difficulty)")
+    plt.xticks(sizes)
+    plt.grid(axis="y", linestyle="--", alpha=0.7)
+    plt.legend()
+    plt.tight_layout()
+    plt.savefig(f"{plots_dir}/initial_training_time_{difficulty.lower()}.png")
+    plt.close()
