@@ -113,67 +113,6 @@ void TreeStrategy::onlyTrainLeafNodes(TreeNode *root, const vector<TreeNode *> &
     }
 }
 
-void TreeStrategy::naiveHierarchy(TreeNode *root, const vector<TreeNode *> &changedLeaves, const int maxLevelsToTrain) {
-    if (!root) return;
-    const bool isInitialTraining = changedLeaves.empty();
-
-    // Collect leaf nodes to train
-    vector<TreeNode *> leafNodesToTrain;
-    if (isInitialTraining) {
-        root->collectLeafNodes(leafNodesToTrain);
-    } else {
-        // Use the provided list of affected leaf nodes directly
-        leafNodesToTrain = changedLeaves;
-    }
-
-    // Train all affected or initial leaf nodes
-    trainTreeNodes(root, leafNodesToTrain, true, "singleAgent");
-
-    // Decision mechanism: Count affected children per parent
-    unordered_map<TreeNode *, int> parentAffectedCount; // Parent -> # of affected children
-    for (const TreeNode *leaf: leafNodesToTrain) {
-        if (leaf->parent) {
-            parentAffectedCount[leaf->parent]++;
-        }
-    }
-
-    // Select parents to retrain: >= 1 affected child
-    vector<TreeNode *> parentsToTrain;
-    for (const auto &[parent, affectedCount]: parentAffectedCount) {
-        if (affectedCount >= 1) {
-            // Retrain if 1 or more of 4 children are affected
-            parentsToTrain.push_back(parent);
-        }
-    }
-
-    // Train parents hierarchically up to maxLevelsToTrain
-    int levelsTrained = 0;
-    unordered_set<TreeNode *> currentLevelNodes(parentsToTrain.begin(), parentsToTrain.end());
-    while (!currentLevelNodes.empty() && levelsTrained < maxLevelsToTrain) {
-        vector<TreeNode *> nodesToTrain(currentLevelNodes.begin(), currentLevelNodes.end());
-        trainTreeNodes(root, nodesToTrain, true, "singleAgent");
-
-        // Prepare next level with the same decision rule
-        unordered_map<TreeNode *, int> nextLevelAffectedCount;
-        for (const TreeNode *node: nodesToTrain) {
-            if (node->parent) {
-                nextLevelAffectedCount[node->parent]++;
-            }
-        }
-
-        // Select parents for the next level
-        unordered_set<TreeNode *> nextLevelNodes;
-        for (const auto &[parent, affectedCount]: nextLevelAffectedCount) {
-            if (affectedCount >= 1) {
-                // Apply same rule for higher levels
-                nextLevelNodes.insert(parent);
-            }
-        }
-        currentLevelNodes = move(nextLevelNodes);
-        levelsTrained++;
-    }
-}
-
 double TreeStrategy::getRetrainingThreshold(const int mazeSize) {
     return 0.01;
 }

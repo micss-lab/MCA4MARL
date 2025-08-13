@@ -6,7 +6,6 @@ namespace constants {
     constexpr int OBSTACLE = 0;
     constexpr int FREE_SPACE = 1;
     constexpr int CHARGING_STATION = 2;
-    constexpr int AGENT = 3;
 
     // Action count
     constexpr int ACTION_COUNT = 8; // Number of possible actions (up, down, left, right, and 4 diagonals)

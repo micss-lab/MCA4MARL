@@ -23,8 +23,6 @@ public:
 
     static void onlyTrainLeafNodes(TreeNode *root, const vector<TreeNode *> &changedLeaves = {});
 
-    static void naiveHierarchy(TreeNode *root, const vector<TreeNode *> &changedLeaves = {}, int maxLevelsToTrain = 1);
-
     static double getRetrainingThreshold(int mazeSize);
 
     static void smartHierarchy(TreeNode *root, const vector<TreeNode *> &changedLeaves = {},

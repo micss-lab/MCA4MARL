@@ -129,9 +129,6 @@ void MultiAgent::fedAsynQ_EqAvg(TreeNode *node, const Maze &maze, const int tau,
             }
         }
 
-        // Log the maximum difference
-        // cout << "Iteration " << t << ": Max Q-difference = " << maxDiff << endl;
-
         // Update the previous Q-table
         prevAggregatedQTable = aggregatedQTable; // Copy current Q-values to previous
 
@@ -146,10 +143,6 @@ void MultiAgent::fedAsynQ_EqAvg(TreeNode *node, const Maze &maze, const int tau,
 
         // Increment iteration count by tau
         t += tau;
-
-        // Linear decay of epsilon and learning rate
-        // epsilon = 1.0 - static_cast<double>(t) / T; // 1.0 -> 0.0
-        // epsilon = max(0.01, epsilon * decayRate);
     }
 
     // Create final Q-table for the node
@@ -318,9 +311,6 @@ void MultiAgent::fedAsynQ_ImAvg(TreeNode *node, const Maze &maze, const int tau,
             }
         }
 
-        // Log the maximum difference
-        // cout << "Iteration " << t << ": Max Q-difference = " << maxDiff << endl;
-
         // Update the previous Q-table
         prevAggregatedQTable = aggregatedQTable; // Copy current Q-values to previous
 
@@ -338,10 +328,6 @@ void MultiAgent::fedAsynQ_ImAvg(TreeNode *node, const Maze &maze, const int tau,
 
         // Increment iteration count by tau
         t += tau;
-
-        // Linear decay of epsilon and learning rate
-        // epsilon = 1.0 - static_cast<double>(t) / T; // 1.0 -> 0.0
-        // epsilon = max(0.01, epsilon * decayRate);
     }
 
     // Create final Q-table for the node

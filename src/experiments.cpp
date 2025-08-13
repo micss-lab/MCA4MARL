@@ -73,7 +73,6 @@ void Experiments::runFullExperiment(bool visualize) {
         "A* Static",
         "A* Oracle",
         "onlyTrainLeafNodes",
-        // "naiveHierarchy",
         "singleAgent",
         "fedAsynQ_EqAvg",
         "fedAsynQ_ImAvg"
@@ -173,7 +172,6 @@ void Experiments::runFullExperiment(bool visualize) {
                 } else {
                     auto start = chrono::high_resolution_clock::now();
                     if (name == "onlyTrainLeafNodes") TreeStrategy::onlyTrainLeafNodes(root);
-                    else if (name == "naiveHierarchy") TreeStrategy::naiveHierarchy(root);
                     else if (name == "singleAgent") TreeStrategy::smartHierarchy(root, {}, "singleAgent");
                     else if (name == "fedAsynQ_EqAvg") TreeStrategy::smartHierarchy(root, {}, "fedAsynQ_EqAvg");
                     else if (name == "fedAsynQ_ImAvg") TreeStrategy::smartHierarchy(root, {}, "fedAsynQ_ImAvg");
@@ -222,7 +220,6 @@ void Experiments::runFullExperiment(bool visualize) {
                     } else {
                         auto start = chrono::high_resolution_clock::now();
                         if (name == "onlyTrainLeafNodes") TreeStrategy::onlyTrainLeafNodes(root, changedLeafSet);
-                        else if (name == "naiveHierarchy") TreeStrategy::naiveHierarchy(root, changedLeafSet);
                         else if (name == "singleAgent")
                             TreeStrategy::smartHierarchy(
                                 root, changedLeafSet, "singleAgent");
